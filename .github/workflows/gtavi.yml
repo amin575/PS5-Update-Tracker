@@ -2,257 +2,123 @@ name: GTA VI Update Tracker
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "*/30 * * * *"
-
-permissions:
-  contents: write
 
 jobs:
   check:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Check GTA VI
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
+      - name: Inspect Prospero scripts
         run: |
           python3 - <<'PY'
           import requests
           import re
-          import html
-          import json
-          import os
-          import subprocess
+          from urllib.parse import urljoin
 
-          BASE = "https://prosperopatches.com"
-          TITLE_ID = "PPSA01547"
-          PAGE = BASE + "/" + TITLE_ID
-          API = BASE + "/api/internal/loadpatches"
-          STATE = "gtavi_version.txt"
+          page_url = "https://prosperopatches.com/PPSA01547"
 
-          token = os.environ["BOT_TOKEN"]
-          chat_id = os.environ["CHAT_ID"]
-
-          s = requests.Session()
-          s.headers.update({
+          headers = {
               "User-Agent": "Mozilla/5.0"
-          })
-
-          print("Opening GTA VI page...")
-          r = s.get(PAGE, timeout=30)
-
-          print("Page HTTP:", r.status_code)
-          print("Page size:", len(r.text))
-
-          if r.status_code != 200:
-              raise SystemExit("Could not open Prospero")
-
-          page = html.unescape(r.text)
-
-          m = re.search(
-              r'id=["\']dynpatch["\'][^>]*',
-              page,
-              re.I
-          )
-
-          if not m:
-              raise SystemExit("dynpatch not found")
-
-          element = m.group(0)
-
-          p = re.search(
-              r'data-loadparams=["\']([^"\']+)["\']',
-              element,
-              re.I
-          )
-
-          if not p:
-              raise SystemExit("data-loadparams not found")
-
-          params = html.unescape(p.group(1))
-
-          print("Load parameters found.")
-
-          t = re.search(
-              r'["\']titleid["\']\s*:\s*["\']([^"\']+)["\']',
-              params,
-              re.I
-          )
-
-          k = re.search(
-              r'["\']key["\']\s*:\s*["\']([^"\']+)["\']',
-              params,
-              re.I
-          )
-
-          if not t:
-              raise SystemExit("Title ID not found")
-
-          if not k:
-              raise SystemExit("Prospero key not found")
-
-          real_title = t.group(1)
-          key = k.group(1)
-
-          print("Title ID:", real_title)
-          print("Key found.")
-
-          payload = {
-              "titleid": real_title,
-              "key": key
           }
 
-          print("Requesting patches...")
+          print("Opening GTA VI page...")
 
-          x = s.post(
-              API,
-              data=json.dumps(payload),
-              headers={
-                  "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-                  "Accept": "application/json",
-                  "Referer": PAGE,
-                  "Origin": BASE,
-                  "X-Requested-With": "XMLHttpRequest"
-              },
+          r = requests.get(
+              page_url,
+              headers=headers,
               timeout=30
           )
 
-          print("API HTTP:", x.status_code)
+          print("HTTP:", r.status_code)
+          print("SIZE:", len(r.text))
+          print()
 
-          print("API response:")
-          print(x.text[:5000])
+          if r.status_code != 200:
+              raise SystemExit("Page request failed")
 
-          if x.status_code != 200:
-              raise SystemExit("Prospero API failed")
-
-          data = x.json()
-
-          if not data.get("success"):
-              raise SystemExit(
-                  "Prospero error: " + str(data)
-              )
-
-          patches = data.get("patches", [])
-
-          if not patches:
-              raise SystemExit("No patches found")
-
-          latest = None
-
-          for patch in patches:
-              if patch.get("is_latest"):
-                  latest = patch
-                  break
-
-          if latest is None:
-              latest = patches[0]
-
-          version = latest.get("content_ver", "Unknown")
-          size = latest.get("filesize", "Unknown")
-          firmware = latest.get("required_firmware", "Unknown")
-          import_date = latest.get("import_date", "Unknown")
-
-          print("")
-          print("========== GTA VI ==========")
-          print("Version:", version)
-          print("Size:", size)
-          print("Firmware:", firmware)
-          print("Import date:", import_date)
-          print("============================")
-
-          old = ""
-
-          if os.path.exists(STATE):
-              with open(STATE, "r") as f:
-                  old = f.read().strip()
-
-          print("Previous:", old if old else "None")
-
-          if not old:
-              print("First run.")
-              with open(STATE, "w") as f:
-                  f.write(version)
-
-          elif old != version:
-              print("NEW GTA VI UPDATE!")
-
-              message = (
-                  "🎮 PS5 UPDATE\n\n"
-                  "Grand Theft Auto VI\n\n"
-                  "Version: " + str(version) + "\n"
-                  "Size: " + str(size) + "\n"
-                  "Required firmware: " + str(firmware) + "\n"
-                  "Import date: " + str(import_date) + "\n\n"
-                  "🆕 GTA VI Update جدید شناسایی شد"
-              )
-
-              tg = (
-                  "https://api.telegram.org/bot"
-                  + token
-                  + "/sendMessage"
-              )
-
-              tr = s.post(
-                  tg,
-                  data={
-                      "chat_id": chat_id,
-                      "text": message
-                  },
-                  timeout=30
-              )
-
-              print("Telegram HTTP:", tr.status_code)
-
-              if tr.status_code != 200:
-                  print(tr.text)
-                  raise SystemExit("Telegram failed")
-
-              with open(STATE, "w") as f:
-                  f.write(version)
-
-              print("Telegram notification sent.")
-
-          else:
-              print("No new update.")
-
-          subprocess.run(
-              ["git", "config", "user.name", "github-actions[bot]"],
-              check=True
+          scripts = re.findall(
+              r'<script[^>]+src=["\']([^"\']+)["\']',
+              r.text,
+              re.I
           )
 
-          subprocess.run(
-              [
-                  "git",
-                  "config",
-                  "user.email",
-                  "41898282+github-actions[bot]@users.noreply.github.com"
-              ],
-              check=True
-          )
+          print("JavaScript files found:", len(scripts))
+          print()
 
-          subprocess.run(
-              ["git", "add", STATE],
-              check=True
-          )
+          for src in scripts:
 
-          if subprocess.run(
-              ["git", "diff", "--cached", "--quiet"]
-          ).returncode != 0:
+              url = urljoin(page_url, src)
 
-              subprocess.run(
-                  ["git", "commit", "-m", "Update GTA VI version"],
-                  check=True
-              )
+              print("--------------------------------")
+              print("SCRIPT:")
+              print(url)
 
-              subprocess.run(
-                  ["git", "push", "origin", "main"],
-                  check=True
-              )
+              try:
 
-          print("GTA VI tracker finished.")
+                  js = requests.get(
+                      url,
+                      headers=headers,
+                      timeout=30
+                  )
+
+                  print("HTTP:", js.status_code)
+                  print("SIZE:", len(js.text))
+
+                  text = js.text.lower()
+
+                  keywords = [
+                      "loadpatches",
+                      "dynpatch",
+                      "titleid",
+                      "data-loadparams",
+                      "/api/internal",
+                      "prosperopatches"
+                  ]
+
+                  found = []
+
+                  for word in keywords:
+                      if word in text:
+                          found.append(word)
+
+                  if found:
+                      print("MATCHES:", ", ".join(found))
+
+                      original = js.text
+
+                      for word in keywords:
+
+                          positions = [
+                              m.start()
+                              for m in re.finditer(
+                                  re.escape(word),
+                                  original,
+                                  re.I
+                              )
+                          ]
+
+                          for pos in positions[:5]:
+
+                              start = max(0, pos - 500)
+                              end = min(
+                                  len(original),
+                                  pos + 1000
+                              )
+
+                              print()
+                              print(
+                                  "===== CONTEXT:",
+                                  word,
+                                  "====="
+                              )
+                              print(
+                                  original[start:end]
+                              )
+
+              except Exception as e:
+
+                  print("ERROR:", e)
+
+          print()
+          print("Inspection finished.")
           PY
