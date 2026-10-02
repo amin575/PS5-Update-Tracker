@@ -12,8 +12,9 @@ jobs:
         run: |
           python - <<'PY'
           import requests
-          import json
-          import re
+          import urllib3
+
+          urllib3.disable_warnings()
 
           title_id = "PPSA01922"
 
@@ -21,34 +22,34 @@ jobs:
           print("Title ID:", title_id)
           print()
 
-          # Try PlayStation's SGST service
           search_urls = [
               f"https://sgst.prod.dl.playstation.net/sgst/prod/00/np/{title_id}_00/",
               f"https://sgst.prod.dl.playstation.net/sgst/prod/00/np/{title_id}/"
           ]
 
-          found = False
-
           for url in search_urls:
               print("Trying:", url)
 
               try:
-                  r = requests.get(url, timeout=20)
+                  r = requests.get(
+                      url,
+                      timeout=20,
+                      verify=False
+                  )
 
                   print("HTTP:", r.status_code)
                   print("Size:", len(r.content))
+                  print()
 
                   if r.status_code == 200:
-                      print("Response:")
-                      print(r.text[:5000])
-                      found = True
+                      print("===== RESPONSE =====")
+                      print(r.text[:10000])
+                      print("===== END RESPONSE =====")
                       break
 
               except Exception as e:
                   print("Error:", e)
 
-          if not found:
-              print()
-              print("❌ Direct SGST lookup did not return data.")
-              print("This test did NOT modify the main PS5 tracker.")
+          print()
+          print("Test finished.")
           PY
