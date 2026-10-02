@@ -1,0 +1,54 @@
+name: Fortnite Update Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Fortnite PS5
+        run: |
+          python - <<'PY'
+          import requests
+          import json
+          import re
+
+          title_id = "PPSA01922"
+
+          print("🎮 Fortnite PS5")
+          print("Title ID:", title_id)
+          print()
+
+          # Try PlayStation's SGST service
+          search_urls = [
+              f"https://sgst.prod.dl.playstation.net/sgst/prod/00/np/{title_id}_00/",
+              f"https://sgst.prod.dl.playstation.net/sgst/prod/00/np/{title_id}/"
+          ]
+
+          found = False
+
+          for url in search_urls:
+              print("Trying:", url)
+
+              try:
+                  r = requests.get(url, timeout=20)
+
+                  print("HTTP:", r.status_code)
+                  print("Size:", len(r.content))
+
+                  if r.status_code == 200:
+                      print("Response:")
+                      print(r.text[:5000])
+                      found = True
+                      break
+
+              except Exception as e:
+                  print("Error:", e)
+
+          if not found:
+              print()
+              print("❌ Direct SGST lookup did not return data.")
+              print("This test did NOT modify the main PS5 tracker.")
+          PY
