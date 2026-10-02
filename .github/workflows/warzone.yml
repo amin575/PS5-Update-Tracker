@@ -8,36 +8,47 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Find Warzone PS5 data
+      - name: Check Warzone PS5
         run: |
           python - <<'PY'
           import requests
           import re
+          import json
 
-          url = "https://www.prosperopatches.com/"
+          title_id = "PPSA07950"
+          url = f"https://prosperopatches.com/{title_id}"
 
-          print("🎮 Warzone PS5")
-          print("Checking ProsperoPatches...")
+          print("🎮 Call of Duty: Warzone")
+          print("Title ID:", title_id)
+          print("Source:", url)
           print()
 
-          r = requests.get(url, timeout=30)
+          r = requests.get(
+              url,
+              timeout=30,
+              headers={
+                  "User-Agent": "Mozilla/5.0"
+              }
+          )
 
           print("HTTP:", r.status_code)
+          print("Page size:", len(r.text))
+          print()
 
           if r.status_code != 200:
-              print("❌ Could not access ProsperoPatches")
+              print("❌ Failed to access ProsperoPatches")
               raise SystemExit(1)
 
           html = r.text
 
-          print("Page size:", len(html))
-          print()
+          print("===== SEARCHING PAGE =====")
 
-          # Look for Warzone references
           patterns = [
-              r'Warzone',
-              r'PPSA[0-9]+',
-              r'PPSA-[0-9]+'
+              r'Patch\s+([0-9.]+)',
+              r'Version\s*:?\s*([0-9.]+)',
+              r'([0-9.]+)\s*GB',
+              r'([0-9.]+)\s*MB',
+              r'PPSA07950'
           ]
 
           found = False
@@ -50,16 +61,33 @@ jobs:
               )
 
               if matches:
-                  print("Found:", pattern)
-                  print(matches[:20])
+                  print("Pattern:", pattern)
+                  print("Matches:", matches[:20])
+                  print()
                   found = True
 
           if not found:
-              print("❌ Warzone data was not present in the initial page.")
+              print("❌ No version/size data found in initial HTML.")
               print()
-              print("ProsperoPatches uses dynamic database loading.")
-              print("The direct page did not expose the game data.")
+              print("This may mean Prospero loads the patch list dynamically.")
+
+              print()
+              print("===== RELEVANT HTML =====")
+
+              for keyword in [
+                  "PPSA07950",
+                  "patch",
+                  "version",
+                  "json",
+                  "api"
+              ]:
+                  pos = html.lower().find(keyword.lower())
+
+                  if pos != -1:
+                      print()
+                      print("Keyword:", keyword)
+                      print(html[max(0, pos - 300):pos + 1000])
 
           print()
-          print("Test finished.")
+          print("===== TEST FINISHED =====")
           PY
