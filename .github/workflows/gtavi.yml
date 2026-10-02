@@ -1,0 +1,189 @@
+name: GTA VI Update Tracker
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check GTA VI
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          python - <<'PY'
+          import requests
+          import os
+          import json
+          import subprocess
+
+          TITLE_ID = "PPSA01547"
+          API_URL = "https://prosperopatches.com/api/internal/loadpatches"
+          PAGE_URL = "https://prosperopatches.com/PPSA01547"
+          STATE_FILE = "gtavi_latest.txt"
+
+          session = requests.Session()
+
+          headers = {
+              "User-Agent": "Mozilla/5.0",
+              "Accept": "application/json",
+              "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+              "Referer": PAGE_URL,
+              "Origin": "https://prosperopatches.com"
+          }
+
+          data = {
+              "titleid": TITLE_ID
+          }
+
+          print("Checking GTA VI...")
+          response = session.post(
+              API_URL,
+              headers=headers,
+              data=json.dumps(data),
+              timeout=30
+          )
+
+          print("HTTP:", response.status_code)
+
+          if response.status_code != 200:
+              print(response.text)
+              raise SystemExit(1)
+
+          result = response.json()
+
+          if not result.get("success"):
+              print(result)
+              raise SystemExit(1)
+
+          patches = result.get("patches", [])
+
+          if not patches:
+              print("No GTA VI data found.")
+              raise SystemExit(1)
+
+          latest = patches[0]
+
+          version = str(latest.get("content_ver", "Unknown"))
+          size = str(latest.get("filesize", "Unknown"))
+          firmware = str(latest.get("required_firmware", "Unknown"))
+          import_date = str(latest.get("import_date", "Unknown"))
+
+          print("Version:", version)
+          print("Size:", size)
+          print("Firmware:", firmware)
+          print("Import date:", import_date)
+
+          new_data = (
+              "🎮 GTA VI PS5\n\n"
+              "Version: " + version + "\n"
+              "Size: " + size + "\n"
+              "Firmware: " + firmware + "\n"
+              "Import Date: " + import_date
+          )
+
+          old_data = ""
+
+          if os.path.exists(STATE_FILE):
+              with open(STATE_FILE, "r") as f:
+                  old_data = f.read().strip()
+
+          if not old_data:
+              print("First run. Saving current data.")
+
+              with open(STATE_FILE, "w") as f:
+                  f.write(new_data)
+
+          elif old_data != new_data:
+              print("NEW GTA VI DATA FOUND!")
+
+              token = os.environ["BOT_TOKEN"]
+              chat_id = os.environ["CHAT_ID"]
+
+              telegram_url = (
+                  "https://api.telegram.org/bot"
+                  + token
+                  + "/sendMessage"
+              )
+
+              message = (
+                  "🎮 GTA VI PS5\n\n"
+                  "🆕 دیتای جدید GTA VI شناسایی شد\n\n"
+                  "Version: " + version + "\n"
+                  "Size: " + size + "\n"
+                  "Firmware: " + firmware + "\n"
+                  "Import Date: " + import_date
+              )
+
+              telegram = requests.post(
+                  telegram_url,
+                  data={
+                      "chat_id": chat_id,
+                      "text": message
+                  },
+                  timeout=30
+              )
+
+              print("Telegram:", telegram.status_code)
+
+              if telegram.status_code != 200:
+                  print(telegram.text)
+                  raise SystemExit(1)
+
+              with open(STATE_FILE, "w") as f:
+                  f.write(new_data)
+
+          else:
+              print("No changes.")
+
+          subprocess.run(
+              ["git", "config", "user.name", "github-actions[bot]"],
+              check=True
+          )
+
+          subprocess.run(
+              [
+                  "git",
+                  "config",
+                  "user.email",
+                  "41898282+github-actions[bot]@users.noreply.github.com"
+              ],
+              check=True
+          )
+
+          subprocess.run(
+              ["git", "add", STATE_FILE],
+              check=True
+          )
+
+          check = subprocess.run(
+              ["git", "diff", "--cached", "--quiet"]
+          )
+
+          if check.returncode != 0:
+              subprocess.run(
+                  ["git", "commit", "-m", "Update GTA VI data"],
+                  check=True
+              )
+
+              subprocess.run(
+                  ["git", "push", "origin", "main"],
+                  check=True
+              )
+
+              print("Saved.")
+          else:
+              print("Nothing to commit.")
+          PY
