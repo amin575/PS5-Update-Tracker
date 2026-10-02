@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: telegram-bot-commands
+  cancel-in-progress: false
+
 jobs:
   bot:
     runs-on: ubuntu-latest
@@ -33,44 +37,58 @@ jobs:
 
           API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-          def telegram(method, data=None):
+          def tg(method, data=None):
+              r = requests.post(
+                  f"{API}/{method}",
+                  json=data or {},
+                  timeout=30
+              )
+
+              print(method, r.status_code)
+
               try:
-                  r = requests.post(
-                      f"{API}/{method}",
-                      json=data or {},
-                      timeout=30
-                  )
-
-                  print(f"{method}: HTTP {r.status_code}")
-
                   return r.json()
-
-              except Exception as e:
-                  print(f"Telegram error: {e}")
+              except:
                   return {}
 
-          # حذف webhook
-          telegram(
+          # ---------------------------------------------------------
+          # Webhook باید خاموش باشد تا getUpdates کار کند
+          # ---------------------------------------------------------
+
+          tg(
               "deleteWebhook",
               {
                   "drop_pending_updates": False
               }
           )
 
-          # خواندن offset قبلی
           offset_file = "telegram_offset.txt"
+
+          # ---------------------------------------------------------
+          # دریافت offset قبلی
+          # ---------------------------------------------------------
+
+          offset_exists = os.path.exists(offset_file)
           offset = None
 
-          if os.path.exists(offset_file):
+          if offset_exists:
               try:
                   with open(
                       offset_file,
                       "r",
                       encoding="utf-8"
                   ) as f:
-                      offset = int(f.read().strip())
-              except:
+                      value = f.read().strip()
+
+                  if value:
+                      offset = int(value)
+
+              except Exception:
                   offset = None
+
+          # ---------------------------------------------------------
+          # دریافت پیام‌های جدید
+          # ---------------------------------------------------------
 
           params = {
               "limit": 100,
@@ -80,18 +98,13 @@ jobs:
           if offset is not None:
               params["offset"] = offset
 
-          try:
-              response = requests.get(
-                  f"{API}/getUpdates",
-                  params=params,
-                  timeout=30
-              )
+          response = requests.get(
+              f"{API}/getUpdates",
+              params=params,
+              timeout=30
+          )
 
-              data = response.json()
-
-          except Exception as e:
-              print("getUpdates error:", e)
-              raise SystemExit(0)
+          data = response.json()
 
           if not data.get("ok"):
               print("getUpdates failed:")
@@ -100,46 +113,201 @@ jobs:
 
           updates = data.get("result", [])
 
-          if not updates:
-              print("No new Telegram messages")
+          print("Updates received:", len(updates))
+
+          # ---------------------------------------------------------
+          # اگر اولین اجرای سیستم است:
+          # پیام‌های قدیمی را مصرف کن ولی جواب نده
+          # ---------------------------------------------------------
+
+          if not offset_exists:
+
+              if updates:
+
+                  newest_offset = (
+                      max(
+                          u["update_id"]
+                          for u in updates
+                      ) + 1
+                  )
+
+                  with open(
+                      offset_file,
+                      "w",
+                      encoding="utf-8"
+                  ) as f:
+                      f.write(str(newest_offset))
+
+                  print(
+                      "First run detected."
+                  )
+
+                  print(
+                      "Old Telegram messages ignored."
+                  )
+
+              else:
+
+                  print(
+                      "First run: no Telegram messages."
+                  )
+
+              # ذخیره offset
+              subprocess.run(
+                  [
+                      "git",
+                      "config",
+                      "user.name",
+                      "github-actions[bot]"
+                  ],
+                  check=True
+              )
+
+              subprocess.run(
+                  [
+                      "git",
+                      "config",
+                      "user.email",
+                      "41898282+github-actions[bot]@users.noreply.github.com"
+                  ],
+                  check=True
+              )
+
+              subprocess.run(
+                  [
+                      "git",
+                      "add",
+                      "telegram_offset.txt"
+                  ],
+                  check=True
+              )
+
+              check = subprocess.run(
+                  [
+                      "git",
+                      "diff",
+                      "--cached",
+                      "--quiet"
+                  ]
+              )
+
+              if check.returncode != 0:
+
+                  subprocess.run(
+                      [
+                          "git",
+                          "commit",
+                          "-m",
+                          "Initialize Telegram offset"
+                      ],
+                      check=True
+                  )
+
+                  subprocess.run(
+                      [
+                          "git",
+                          "pull",
+                          "--rebase",
+                          "origin",
+                          "main"
+                      ],
+                      check=True
+                  )
+
+                  subprocess.run(
+                      [
+                          "git",
+                          "push",
+                          "origin",
+                          "main"
+                      ],
+                      check=True
+                  )
+
+              print("Telegram bot initialized.")
               raise SystemExit(0)
 
-          print(f"Received {len(updates)} update(s)")
 
-          latest_offset = None
+          # ---------------------------------------------------------
+          # هیچ پیام جدیدی نیست
+          # ---------------------------------------------------------
+
+          if not updates:
+
+              print(
+                  "No new Telegram messages."
+              )
+
+              raise SystemExit(0)
+
+
+          # ---------------------------------------------------------
+          # آخرین offset
+          # ---------------------------------------------------------
+
+          newest_offset = (
+              max(
+                  u["update_id"]
+                  for u in updates
+              ) + 1
+          )
+
+
+          # ---------------------------------------------------------
+          # فقط جدیدترین /updates را پیدا کن
+          # ---------------------------------------------------------
+
+          command_found = False
 
           for update in updates:
 
-              update_id = update.get("update_id")
+              message = update.get(
+                  "message",
+                  {}
+              )
 
-              if update_id is not None:
-                  latest_offset = update_id + 1
-
-              message = update.get("message", {})
-
-              text = message.get(
-                  "text",
-                  ""
-              ).strip()
+              text = (
+                  message.get(
+                      "text",
+                      ""
+                  )
+                  .strip()
+              )
 
               if not text:
                   continue
 
-              print("Telegram message:", text)
+              print(
+                  "Telegram message:",
+                  text
+              )
 
-              # فقط دستور /updates
-              command = text.split()[0].lower()
+              command = (
+                  text.split()[0]
+                  .lower()
+              )
 
-              if command != "/updates":
-                  continue
+              if command == "/updates":
 
-              print("Processing /updates")
+                  command_found = True
 
-              # =====================================================
+          # ---------------------------------------------------------
+          # اگر /updates وجود داشت، فقط یک بار پاسخ بده
+          # ---------------------------------------------------------
+
+          if command_found:
+
+              print(
+                  "New /updates command found."
+              )
+
+              # -----------------------------------------------------
               # PS5
-              # =====================================================
+              # -----------------------------------------------------
 
-              if os.path.exists("ps5_latest.txt"):
+              if os.path.exists(
+                  "ps5_latest.txt"
+              ):
 
                   with open(
                       "ps5_latest.txt",
@@ -151,25 +319,28 @@ jobs:
               else:
 
                   ps5 = (
-                      "اطلاعات آپدیت PS5 هنوز ذخیره نشده."
+                      "اطلاعات آپدیت PS5 هنوز "
+                      "ذخیره نشده."
                   )
 
-              telegram(
+              tg(
                   "sendMessage",
                   {
                       "chat_id": CHAT_ID,
-                      "text": (
+                      "text":
                           "🎮 PS5 SYSTEM SOFTWARE\n\n"
                           + ps5
-                      )
                   }
               )
 
-              # =====================================================
-              # WARZONE
-              # =====================================================
 
-              if os.path.exists("warzone_latest.txt"):
+              # -----------------------------------------------------
+              # WARZONE
+              # -----------------------------------------------------
+
+              if os.path.exists(
+                  "warzone_latest.txt"
+              ):
 
                   with open(
                       "warzone_latest.txt",
@@ -181,25 +352,28 @@ jobs:
               else:
 
                   warzone = (
-                      "اطلاعات آپدیت Warzone هنوز ذخیره نشده."
+                      "اطلاعات آپدیت Warzone هنوز "
+                      "ذخیره نشده."
                   )
 
-              telegram(
+              tg(
                   "sendMessage",
                   {
                       "chat_id": CHAT_ID,
-                      "text": (
+                      "text":
                           "🎮 WARZONE PS5\n\n"
                           + warzone
-                      )
                   }
               )
 
-              # =====================================================
-              # FORTNITE
-              # =====================================================
 
-              if os.path.exists("fortnite_latest.txt"):
+              # -----------------------------------------------------
+              # FORTNITE
+              # -----------------------------------------------------
+
+              if os.path.exists(
+                  "fortnite_latest.txt"
+              ):
 
                   with open(
                       "fortnite_latest.txt",
@@ -211,38 +385,48 @@ jobs:
               else:
 
                   fortnite = (
-                      "اطلاعات آپدیت Fortnite هنوز ذخیره نشده."
+                      "اطلاعات آپدیت Fortnite هنوز "
+                      "ذخیره نشده."
                   )
 
-              telegram(
+              tg(
                   "sendMessage",
                   {
                       "chat_id": CHAT_ID,
-                      "text": (
+                      "text":
                           "🎮 FORTNITE PS5\n\n"
                           + fortnite
-                      )
                   }
               )
 
-              print("✅ /updates sent")
+              print(
+                  "✅ /updates response sent once."
+              )
 
-          # =========================================================
-          # ذخیره offset
-          # =========================================================
+          else:
 
-          if latest_offset is not None:
+              print(
+                  "No /updates command."
+              )
 
-              with open(
-                  offset_file,
-                  "w",
-                  encoding="utf-8"
-              ) as f:
-                  f.write(str(latest_offset))
 
-          # =========================================================
-          # Commit offset
-          # =========================================================
+          # ---------------------------------------------------------
+          # همیشه پیام‌های دریافت‌شده را مصرف کن
+          # ---------------------------------------------------------
+
+          with open(
+              offset_file,
+              "w",
+              encoding="utf-8"
+          ) as f:
+              f.write(
+                  str(newest_offset)
+              )
+
+
+          # ---------------------------------------------------------
+          # ذخیره offset در GitHub
+          # ---------------------------------------------------------
 
           subprocess.run(
               [
@@ -313,8 +497,7 @@ jobs:
                       "main"
                   ],
                   check=True
-
               )
 
-          print("Telegram bot finished")
+          print("Telegram bot finished.")
           PY
