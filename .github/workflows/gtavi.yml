@@ -8,7 +8,26 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Test
+      - name: Test Prospero
         run: |
-          echo "GTA VI WORKFLOW IS RUNNING"
-          echo "PPSA01547"
+          python - <<'PY'
+          import requests
+
+          url = "https://prosperopatches.com/PPSA01547"
+
+          print("Opening GTA VI Prospero page...")
+          print(url)
+
+          r = requests.get(
+              url,
+              headers={
+                  "User-Agent": "Mozilla/5.0"
+              },
+              timeout=20
+          )
+
+          print("HTTP:", r.status_code)
+          print("SIZE:", len(r.text))
+          print()
+          print(r.text[:2000])
+          PY
