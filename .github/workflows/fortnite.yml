@@ -15,6 +15,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Check Fortnite update
         env:
@@ -114,44 +116,52 @@ jobs:
           else:
               print("No new Fortnite update")
 
-          result = subprocess.run(
-              ["git", "status", "--porcelain"],
-              capture_output=True,
-              text=True
+          print("Updating repository state...")
+
+          subprocess.run(
+              ["git", "config", "user.name", "github-actions[bot]"],
+              check=True
           )
 
-          if result.stdout.strip():
-              subprocess.run(
-                  ["git", "config", "user.name", "github-actions[bot]"],
-                  check=True
-              )
+          subprocess.run(
+              [
+                  "git",
+                  "config",
+                  "user.email",
+                  "41898282+github-actions[bot]@users.noreply.github.com"
+              ],
+              check=True
+          )
 
-              subprocess.run(
-                  [
-                      "git",
-                      "config",
-                      "user.email",
-                      "41898282+github-actions[bot]@users.noreply.github.com"
-                  ],
-                  check=True
-              )
+          subprocess.run(
+              ["git", "add", STATE_FILE],
+              check=True
+          )
 
-              subprocess.run(
-                  ["git", "add", STATE_FILE],
-                  check=True
-              )
+          result = subprocess.run(
+              ["git", "diff", "--cached", "--quiet"]
+          )
 
+          if result.returncode != 0:
               subprocess.run(
                   ["git", "commit", "-m", "Update Fortnite version"],
                   check=True
               )
 
               subprocess.run(
-                  ["git", "push"],
+                  ["git", "pull", "--rebase", "origin", "main"],
                   check=True
               )
 
-              print("Version state saved")
+              subprocess.run(
+                  ["git", "push", "origin", "main"],
+                  check=True
+              )
+
+              print("Version state saved successfully")
+
+          else:
+              print("No repository changes")
 
           print("Fortnite tracker finished")
           PY
