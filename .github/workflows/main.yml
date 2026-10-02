@@ -2,29 +2,121 @@ name: PS5 System Update Tracker
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
 
 jobs:
   check:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+
     steps:
-      - name: Read Sony XML
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check PS5 System Update
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
           python - <<'PY'
           import requests
+          import xml.etree.ElementTree as ET
+          import os
+          from pathlib import Path
 
-          url = "http://fus01.ps5.update.playstation.net/update/ps5/official/tJMRE80IbXnE9YuG0jzTXgKEjIMoabr6/list/us/updatelist.xml"
+          URL = "http://fus01.ps5.update.playstation.net/update/ps5/official/tJMRE80IbXnE9YuG0jzTXgKEjIMoabr6/list/us/updatelist.xml"
 
-          print("1. Getting Sony XML...")
+          print("Getting Sony XML...")
 
-          r = requests.get(url, timeout=20)
-
-          print("2. HTTP:", r.status_code)
-          print("3. XML size:", len(r.content))
-
+          r = requests.get(URL, timeout=30)
           r.raise_for_status()
 
-          print("===== SONY XML START =====")
-          print(r.text)
-          print("===== SONY XML END =====")
+          root = ET.fromstring(r.content)
+
+          system = root.find(".//system_pup")
+
+          if system is None:
+              raise Exception("PS5 system update not found")
+
+          version = system.attrib["label"]
+
+          image = system.find(".//image")
+
+          if image is None:
+              raise Exception("Update image not found")
+
+          size = int(image.attrib["size"])
+          size_gb = size / 1024 / 1024 / 1024
+
+          print("Current version:", version)
+          print("Update size:", f"{size_gb:.2f} GB")
+
+          state_file = Path("ps5_system_version.txt")
+
+          old_version = ""
+
+          if state_file.exists():
+              old_version = state_file.read_text().strip()
+
+          print("Previous version:", old_version or "NONE")
+
+          # First run: save current version without sending notification
+          if not old_version:
+              state_file.write_text(version)
+
+              print("First run.")
+              print("Current version saved.")
+              print("No Telegram notification sent.")
+
+          # New version detected
+          elif old_version != version:
+
+              BOT_TOKEN = os.environ["BOT_TOKEN"]
+              CHAT_ID = os.environ["CHAT_ID"]
+
+              message = (
+                  "🟦 PS5 SYSTEM SOFTWARE\n\n"
+                  "Version: " + version + "\n"
+                  "Size: " + f"{size_gb:.2f}" + " GB\n\n"
+                  "🆕 System Update جدید منتشر شد"
+              )
+
+              tg = requests.post(
+                  "https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage",
+                  data={
+                      "chat_id": CHAT_ID,
+                      "text": message
+                  },
+                  timeout=30
+              )
+
+              print("Telegram HTTP:", tg.status_code)
+              print("Telegram response:", tg.text)
+
+              tg.raise_for_status()
+
+              state_file.write_text(version)
+
+              print("New version saved.")
+
+          # Same version
+          else:
+              print("No new update.")
           PY
+
+      - name: Save state
+        run: |
+          git config user.name "PS5 Update Tracker"
+          git config user.email "actions@github.com"
+
+          git add ps5_system_version.txt
+
+          if git diff --cached --quiet; then
+            echo "No state changes."
+          else
+            git commit -m "Update PS5 firmware state"
+            git push
+          fi
