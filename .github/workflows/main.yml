@@ -18,21 +18,25 @@ jobs:
           import xml.etree.ElementTree as ET
           import os
 
-          BOT_TOKEN = os.environ["BOT_TOKEN"]
-          CHAT_ID = os.environ["CHAT_ID"]
-
           url = "http://fus01.ps5.update.playstation.net/update/ps5/official/tJMRE80IbXnE9YuG0jzTXgKEjIMoabr6/list/us/updatelist.xml"
 
+          print("1. Getting Sony XML...")
+
           r = requests.get(url, timeout=20)
+
+          print("2. HTTP:", r.status_code)
+          print("3. XML size:", len(r.content))
+
           r.raise_for_status()
 
-          root = ET.fromstring(r.text)
+          root = ET.fromstring(r.content)
 
-          # پیدا کردن آخرین Firmware
           systems = root.findall(".//system_pup")
 
+          print("4. Firmware entries:", len(systems))
+
           if not systems:
-              raise Exception("No PS5 firmware found in XML")
+              raise Exception("No system_pup found")
 
           system = systems[-1]
 
@@ -41,19 +45,27 @@ jobs:
           image = system.find(".//image")
 
           if image is None:
-              raise Exception("Firmware image not found")
+              raise Exception("No firmware image found")
 
           size = int(image.attrib.get("size", "0"))
           size_gb = size / 1024 / 1024 / 1024
 
+          print("5. Version:", version)
+          print("6. Size:", size_gb, "GB")
+
+          BOT_TOKEN = os.environ["BOT_TOKEN"]
+          CHAT_ID = os.environ["CHAT_ID"]
+
           message = (
               "🟦 PS5 SYSTEM SOFTWARE\n\n"
-              f"Version: {version}\n"
-              f"Size: {size_gb:.2f} GB"
+              "Version: " + version + "\n"
+              "Size: " + f"{size_gb:.2f}" + " GB"
           )
 
-          response = requests.post(
-              f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+          print("7. Sending Telegram message...")
+
+          tg = requests.post(
+              "https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage",
               data={
                   "chat_id": CHAT_ID,
                   "text": message
@@ -61,7 +73,10 @@ jobs:
               timeout=20
           )
 
-          response.raise_for_status()
+          print("8. Telegram HTTP:", tg.status_code)
+          print("9. Telegram response:", tg.text)
 
-          print(message)
+          tg.raise_for_status()
+
+          print("10. DONE")
           PY
