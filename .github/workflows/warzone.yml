@@ -12,73 +12,39 @@ jobs:
         run: |
           python - <<'PY'
           import requests
-          import re
-          import html
+          import json
 
-          URL = "https://prosperopatches.com/PPSA07950"
+          API = "https://prosperopatches.com/api/internal/loadpatches"
+
+          data = {
+              "titleid": "PPSA07950",
+              "key": "db36a93c8bdfcc99c6c0170671c3b49d75a9873eb3c634fde0ab26392353a299"
+          }
 
           print("🎮 Warzone PS5")
-          print("Opening Prospero page...")
+          print("Testing Prospero API...")
+          print()
+          print("API:", API)
+          print("Title ID:", data["titleid"])
           print()
 
-          r = requests.get(
-              URL,
+          r = requests.post(
+              API,
+              data=data,
               timeout=30,
               headers={
-                  "User-Agent": "Mozilla/5.0"
+                  "User-Agent": "Mozilla/5.0",
+                  "X-Requested-With": "XMLHttpRequest",
+                  "Referer": "https://prosperopatches.com/PPSA07950"
               }
           )
 
           print("HTTP:", r.status_code)
-          print("Page size:", len(r.text))
+          print("Response size:", len(r.text))
           print()
 
-          if r.status_code != 200:
-              print("❌ Page could not be loaded")
-              raise SystemExit(1)
-
-          page = html.unescape(r.text)
-
-          print("===== SEARCHING TITLE DATA =====")
-
-          patterns = [
-              r'data-titleid=["\']([^"\']+)',
-              r'data-key=["\']([^"\']+)',
-              r'data-contentver=["\']([^"\']+)',
-              r'data-title=["\']([^"\']+)'
-          ]
-
-          values = {}
-
-          for pattern in patterns:
-              matches = re.findall(
-                  pattern,
-                  page,
-                  re.IGNORECASE
-              )
-
-              print()
-              print("PATTERN:", pattern)
-
-              if matches:
-                  for value in matches[:20]:
-                      print(value)
-              else:
-                  print("NOT FOUND")
-
-          print()
-          print("===== SEARCHING AROUND data-titleid =====")
-
-          for match in re.finditer(
-              r'data-titleid',
-              page,
-              re.IGNORECASE
-          ):
-              pos = match.start()
-              print(page[max(0, pos - 500):pos + 2000])
-              print()
-              break
-
+          print("===== API RESPONSE =====")
+          print(r.text)
           print()
           print("===== TEST FINISHED =====")
           PY
