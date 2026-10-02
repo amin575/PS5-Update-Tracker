@@ -1,90 +1,127 @@
-name: GTA VI Key Test
+name: GTA VI Key Capture
 
 on:
   workflow_dispatch:
 
 jobs:
-  test:
+  capture:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Extract Prospero data
+      - name: Install browser
+        run: |
+          python -m pip install playwright
+          python -m playwright install chromium --with-deps
+
+      - name: Capture Prospero request
         run: |
           python - <<'PY'
-          import requests
-          import re
+          import asyncio
+          from playwright.async_api import async_playwright
 
-          url = "https://prosperopatches.com/PPSA01547"
+          async def main():
 
-          r = requests.get(
-              url,
-              headers={
-                  "User-Agent": "Mozilla/5.0"
-              },
-              timeout=30
-          )
+              async with async_playwright() as p:
 
-          print("HTTP:", r.status_code)
-          print("SIZE:", len(r.text))
-          print()
+                  browser = await p.chromium.launch(
+                      headless=True
+                  )
 
-          html = r.text
+                  page = await browser.new_page()
 
-          # Search for anything containing loadpatches
-          print("===== LOADPATCHES =====")
+                  captured = []
 
-          matches = re.findall(
-              r'.{0,300}loadpatches.{0,500}',
-              html,
-              re.IGNORECASE
-          )
+                  async def response_handler(response):
 
-          if matches:
-              for x in matches:
-                  print(x)
-                  print()
-          else:
-              print("No loadpatches found")
+                      url = response.url
 
-          # Search for anything containing data-key
-          print("===== DATA-KEY =====")
+                      if "loadpatches" in url.lower():
 
-          matches = re.findall(
-              r'.{0,300}data-key.{0,500}',
-              html,
-              re.IGNORECASE
-          )
+                          print()
+                          print("================================")
+                          print("LOADPATCHES REQUEST FOUND")
+                          print("================================")
+                          print("URL:")
+                          print(url)
+                          print()
 
-          if matches:
-              for x in matches:
-                  print(x)
-                  print()
-          else:
-              print("No data-key found")
+                          print("METHOD:")
+                          print(response.request.method)
+                          print()
 
-          # Search for key= style values
-          print("===== KEY REFERENCES =====")
+                          print("REQUEST HEADERS:")
+                          print(await response.request.all_headers())
+                          print()
 
-          matches = re.findall(
-              r'.{0,200}(?:key|KEY).{0,400}',
-              html
-          )
+                          try:
+                              print("POST DATA:")
+                              print(response.request.post_data)
+                          except:
+                              print("POST DATA: None")
 
-          count = 0
+                          print()
+                          print("RESPONSE:")
+                          
+                          try:
+                              print(await response.text())
+                          except Exception as e:
+                              print("Could not read response:", e)
 
-          for x in matches:
-              print(x)
-              print()
+                          captured.append(True)
 
-              count += 1
+                  page.on(
+                      "response",
+                      response_handler
+                  )
 
-              if count >= 30:
-                  break
+                  print("Opening GTA VI Prospero page...")
 
-          # Save complete HTML for inspection
-          with open("prospero.html", "w", encoding="utf-8") as f:
-              f.write(html)
+                  try:
 
-          print()
-          print("Complete HTML saved.")
+                      await page.goto(
+                          "https://prosperopatches.com/PPSA01547",
+                          wait_until="domcontentloaded",
+                          timeout=20000
+                      )
+
+                  except Exception as e:
+
+                      print(
+                          "Page load warning:",
+                          e
+                      )
+
+                  print("Page loaded.")
+
+                  # Give the site's JavaScript time
+                  # to make its API request.
+                  for i in range(20):
+
+                      if captured:
+                          break
+
+                      await page.wait_for_timeout(1000)
+
+                      print(
+                          "Waiting for API request...",
+                          i + 1
+                      )
+
+                  if not captured:
+
+                      print()
+                      print(
+                          "❌ LOADPATCHES REQUEST WAS NOT CAPTURED"
+                      )
+
+                  else:
+
+                      print()
+                      print(
+                          "✅ REQUEST CAPTURED SUCCESSFULLY"
+                      )
+
+                  await browser.close()
+
+          asyncio.run(main())
           PY
