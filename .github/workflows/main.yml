@@ -8,23 +8,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Inspect Sony XML
+      - name: TEST
         run: |
-          python - <<'PY'
-          import requests
-
-          url = "http://fus01.ps5.update.playstation.net/update/ps5/official/tJMRE80IbXnE9YuG0jzTXgKEjIMoabr6/list/us/updatelist.xml"
-
-          print("1. Getting Sony XML...")
-
-          r = requests.get(url, timeout=20)
-
-          print("2. HTTP:", r.status_code)
-          print("3. XML size:", len(r.content))
-
-          r.raise_for_status()
-
-          print("===== SONY XML START =====")
-          print(r.text)
-          print("===== SONY XML END =====")
-          PY
+          echo "🔥 NEW CODE IS RUNNING"
+          echo "TIME:"
+          date
