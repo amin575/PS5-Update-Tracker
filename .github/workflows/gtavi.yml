@@ -1,4 +1,4 @@
-name: GTA VI Find API URI
+name: GTA VI Find Patch Endpoint
 
 on:
   workflow_dispatch:
@@ -8,45 +8,49 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Find apiUri
+      - name: Inspect GTA VI page
         run: |
           python3 - <<'PY'
           import requests
           import re
 
-          urls = [
-              "https://prosperopatches.com/PPSA01547",
-              "https://prosperopatches.com/assets/js/global.js?v=1709144554",
-              "https://prosperopatches.com/assets/js/scripts.js?v=1709144554",
-              "https://prosperopatches.com/assets/js/homepage.js?v=1709144554"
+          url = "https://prosperopatches.com/PPSA01547"
+
+          r = requests.get(
+              url,
+              headers={"User-Agent": "Mozilla/5.0"},
+              timeout=30
+          )
+
+          text = r.text
+
+          print("HTTP:", r.status_code)
+          print("SIZE:", len(text))
+          print()
+
+          patterns = [
+              r'data-url="[^"]+"',
+              r'data-params="[^"]+"',
+              r'data-endpoint="[^"]+"',
+              r'data-func="[^"]+"',
+              r'dynamicmodal[^>]*',
+              r'dynamicform[^>]*',
+              r'loadpatches',
+              r'patches',
+              r'api/internal'
           ]
 
-          for url in urls:
-
-              print()
+          for pattern in patterns:
               print("=" * 70)
-              print(url)
-              print("=" * 70)
+              print("PATTERN:", pattern)
 
-              r = requests.get(
-                  url,
-                  headers={"User-Agent": "Mozilla/5.0"},
-                  timeout=30
-              )
+              matches = list(re.finditer(pattern, text, re.I))
 
-              text = r.text
+              print("MATCHES:", len(matches))
 
-              matches = list(re.finditer(r'apiUri', text, re.I))
-
-              print("HTTP:", r.status_code)
-              print("SIZE:", len(text))
-              print("apiUri matches:", len(matches))
-
-              for m in matches:
-
-                  start = max(0, m.start() - 300)
-                  end = min(len(text), m.end() + 500)
-
+              for m in matches[:20]:
+                  start = max(0, m.start() - 500)
+                  end = min(len(text), m.end() + 1000)
                   print()
                   print(text[start:end])
 
