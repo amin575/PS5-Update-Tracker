@@ -6,7 +6,7 @@ on:
     - cron: "*/5 * * * *"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   bot:
@@ -15,6 +15,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Check Telegram commands
         env:
@@ -25,6 +27,7 @@ jobs:
           import requests
           import os
           import time
+          import subprocess
 
           BOT_TOKEN = os.environ["BOT_TOKEN"]
           CHAT_ID = str(os.environ["CHAT_ID"])
@@ -33,13 +36,55 @@ jobs:
 
           print("🤖 Telegram command checker started")
 
-          # ---------------------------------------------
-          # Read Telegram messages
-          # ---------------------------------------------
+          # --------------------------------------------------
+          # Remove webhook so getUpdates can work
+          # --------------------------------------------------
+
+          webhook = requests.post(
+              API + "/deleteWebhook",
+              data={
+                  "drop_pending_updates": False
+              },
+              timeout=20
+          )
+
+          print("Delete webhook HTTP:", webhook.status_code)
+
+          if webhook.status_code != 200:
+              print(webhook.text)
+              raise SystemExit(1)
+
+          # --------------------------------------------------
+          # Read last processed Telegram update
+          # --------------------------------------------------
+
+          OFFSET_FILE = "telegram_offset.txt"
+
+          last_offset = 0
+
+          if os.path.exists(OFFSET_FILE):
+
+              with open(
+                  OFFSET_FILE,
+                  "r",
+                  encoding="utf-8"
+              ) as f:
+
+                  value = f.read().strip()
+
+                  if value.isdigit():
+                      last_offset = int(value)
+
+          print("Last offset:", last_offset)
+
+          # --------------------------------------------------
+          # Get Telegram messages
+          # --------------------------------------------------
 
           response = requests.get(
               API + "/getUpdates",
               params={
+                  "offset": last_offset + 1,
                   "timeout": 10,
                   "allowed_updates": '["message"]'
               },
@@ -62,9 +107,11 @@ jobs:
 
           print("Telegram updates:", len(updates))
 
-          # ---------------------------------------------
+          newest_update_id = last_offset
+
+          # --------------------------------------------------
           # Read saved versions
-          # ---------------------------------------------
+          # --------------------------------------------------
 
           def read_file(filename):
 
@@ -76,6 +123,7 @@ jobs:
                   "r",
                   encoding="utf-8"
               ) as f:
+
                   return f.read().strip()
 
           ps5_version = read_file(
@@ -94,11 +142,16 @@ jobs:
           print("Warzone:", warzone_version)
           print("Fortnite:", fortnite_version)
 
-          # ---------------------------------------------
-          # Process Telegram messages
-          # ---------------------------------------------
+          # --------------------------------------------------
+          # Process messages
+          # --------------------------------------------------
 
           for update in updates:
+
+              update_id = update.get("update_id", 0)
+
+              if update_id > newest_update_id:
+                  newest_update_id = update_id
 
               message = update.get("message", {})
 
@@ -112,6 +165,7 @@ jobs:
                   continue
 
               if chat_id != CHAT_ID:
+                  print("Ignoring another chat")
                   continue
 
               command = text.strip().split()[0].lower()
@@ -121,9 +175,9 @@ jobs:
 
               print("📥 /updates received")
 
-              # -----------------------------------------
+              # ------------------------------------------------
               # PS5
-              # -----------------------------------------
+              # ------------------------------------------------
 
               if ps5_version:
 
@@ -137,17 +191,15 @@ jobs:
 
           ❌ اطلاعات نسخه موجود نیست"""
 
-              # -----------------------------------------
+              # ------------------------------------------------
               # Warzone
-              # -----------------------------------------
+              # ------------------------------------------------
 
               if warzone_version:
 
                   warzone_message = f"""🔫 CALL OF DUTY: WARZONE
 
-          Version: {warzone_version}
-
-          📦 جزئیات حجم و Firmware فعلاً در فایل ذخیره نشده."""
+          Version: {warzone_version}"""
 
               else:
 
@@ -155,17 +207,15 @@ jobs:
 
           ❌ اطلاعات نسخه موجود نیست"""
 
-              # -----------------------------------------
+              # ------------------------------------------------
               # Fortnite
-              # -----------------------------------------
+              # ------------------------------------------------
 
               if fortnite_version:
 
                   fortnite_message = f"""🟣 FORTNITE
 
-          Version: {fortnite_version}
-
-          📦 جزئیات حجم فعلاً در فایل ذخیره نشده."""
+          Version: {fortnite_version}"""
 
               else:
 
@@ -173,9 +223,9 @@ jobs:
 
           ❌ اطلاعات نسخه موجود نیست"""
 
-              # -----------------------------------------
+              # ------------------------------------------------
               # Send 3 separate messages
-              # -----------------------------------------
+              # ------------------------------------------------
 
               for msg in [
                   ps5_message,
@@ -203,6 +253,101 @@ jobs:
                   time.sleep(0.5)
 
               print("✅ 3 messages sent")
+
+          # --------------------------------------------------
+          # Save Telegram offset
+          # --------------------------------------------------
+
+          if newest_update_id > last_offset:
+
+              with open(
+                  OFFSET_FILE,
+                  "w",
+                  encoding="utf-8"
+              ) as f:
+
+                  f.write(str(newest_update_id))
+
+              print(
+                  "Saved new offset:",
+                  newest_update_id
+              )
+
+          else:
+
+              print("No new Telegram updates")
+
+          # --------------------------------------------------
+          # Commit offset
+          # --------------------------------------------------
+
+          subprocess.run(
+              [
+                  "git",
+                  "config",
+                  "user.name",
+                  "github-actions[bot]"
+              ],
+              check=True
+          )
+
+          subprocess.run(
+              [
+                  "git",
+                  "config",
+                  "user.email",
+                  "41898282+github-actions[bot]@users.noreply.github.com"
+              ],
+              check=True
+          )
+
+          subprocess.run(
+              ["git", "add", OFFSET_FILE],
+              check=True
+          )
+
+          result = subprocess.run(
+              ["git", "diff", "--cached", "--quiet"]
+          )
+
+          if result.returncode != 0:
+
+              subprocess.run(
+                  [
+                      "git",
+                      "commit",
+                      "-m",
+                      "Update Telegram offset"
+                  ],
+                  check=True
+              )
+
+              subprocess.run(
+                  [
+                      "git",
+                      "pull",
+                      "--rebase",
+                      "origin",
+                      "main"
+                  ],
+                  check=True
+              )
+
+              subprocess.run(
+                  [
+                      "git",
+                      "push",
+                      "origin",
+                      "main"
+                  ],
+                  check=True
+              )
+
+              print("Telegram offset saved")
+
+          else:
+
+              print("No repository changes")
 
           print("🤖 Telegram command checker finished")
           PY
