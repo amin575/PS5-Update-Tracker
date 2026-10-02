@@ -1,0 +1,4 @@
+Version: 26.06-14.10.00.03-00.00.00.0.1
+Short Version: 14.10.00.00
+Size: 1.17 GB
+Size Bytes: 1261408256
