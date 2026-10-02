@@ -8,11 +8,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Inspect Prospero page scripts
+      - name: Inspect Prospero scripts
         run: |
           python3 - <<'PY'
           import requests
-          from bs4 import BeautifulSoup
+          import re
           from urllib.parse import urljoin
 
           url = "https://prosperopatches.com/PPSA01547"
@@ -27,14 +27,15 @@ jobs:
           print("PAGE SIZE:", len(r.text))
           print()
 
-          soup = BeautifulSoup(r.text, "html.parser")
+          html = r.text
 
-          scripts = []
+          scripts = re.findall(
+              r'<script[^>]+src=["\']([^"\']+)["\']',
+              html,
+              re.I
+          )
 
-          for s in soup.find_all("script"):
-              src = s.get("src")
-              if src:
-                  scripts.append(urljoin(url, src))
+          scripts = [urljoin(url, x) for x in scripts]
 
           print("========== SCRIPT FILES ==========")
 
@@ -43,7 +44,6 @@ jobs:
 
           print()
           print("TOTAL SCRIPTS:", len(scripts))
-          print()
 
           keywords = [
               "fetch(",
@@ -77,30 +77,29 @@ jobs:
                   print("SIZE:", len(jr.text))
                   print()
 
-                  text = jr.text
-
+                  js = jr.text
                   found = False
 
                   for keyword in keywords:
-                      pos = 0
+                      start_pos = 0
 
                       while True:
-                          pos = text.lower().find(keyword.lower(), pos)
+                          pos = js.lower().find(keyword.lower(), start_pos)
 
                           if pos == -1:
                               break
 
                           found = True
 
-                          start = max(0, pos - 500)
-                          end = min(len(text), pos + 1000)
+                          start = max(0, pos - 700)
+                          end = min(len(js), pos + 1500)
 
                           print(f"--- MATCH: {keyword} ---")
-                          print(text[start:end])
+                          print(js[start:end])
                           print("--- END MATCH ---")
                           print()
 
-                          pos += len(keyword)
+                          start_pos = pos + len(keyword)
 
                   if not found:
                       print("NO RELEVANT MATCHES")
@@ -113,14 +112,21 @@ jobs:
           print("INLINE SCRIPTS")
           print("=" * 80)
 
-          for i, s in enumerate(soup.find_all("script"), 1):
-              if not s.get("src"):
-                  content = s.get_text(strip=False)
+          inline = re.findall(
+              r'<script(?![^>]+src=)[^>]*>(.*?)</script>',
+              html,
+              re.I | re.S
+          )
 
-                  if content.strip():
-                      print()
-                      print(f"--- INLINE SCRIPT {i} ---")
-                      print(content)
-                      print(f"--- END INLINE SCRIPT {i} ---")
+          print("INLINE SCRIPT COUNT:", len(inline))
+
+          for i, content in enumerate(inline, 1):
+
+              if content.strip():
+
+                  print()
+                  print(f"--- INLINE SCRIPT {i} ---")
+                  print(content)
+                  print(f"--- END INLINE SCRIPT {i} ---")
 
           PY
