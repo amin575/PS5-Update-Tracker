@@ -8,51 +8,48 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check Fortnite PS5
+      - name: Check Fortnite PS5 update
         run: |
-          python -m pip install --upgrade pip
-          pip install ps5-updates
-
           python - <<'PY'
-          from ps5_updates import title as ps5up
+          import requests
+          import re
 
-          title_id = "PPSA01922"
+          url = "https://framepatch.app/games/fortnite"
 
           print("🎮 Fortnite PS5")
-          print("Title ID:", title_id)
+          print("Source:", url)
           print()
 
-          # Known PS5 version.xml URL format.
-          # This test checks whether a direct title endpoint is available.
-          urls = [
-              f"https://sgst.prod.dl.playstation.net/sgst/prod/00/np/{title_id}_00/",
-              f"https://sgst.prod.dl.playstation.net/sgst/prod/00/np/{title_id}/"
-          ]
+          r = requests.get(url, timeout=30)
 
-          for url in urls:
-              print("Trying:", url)
+          print("HTTP:", r.status_code)
 
-              try:
-                  title = ps5up.Ps5TitleUpdate.from_url(url)
-                  title.get_update()
+          if r.status_code != 200:
+              print("❌ Failed to fetch Fortnite page")
+              raise SystemExit(1)
 
-                  print()
-                  print("===== RESULT =====")
-                  print("Title ID:", title.title_id)
-                  print("Content ID:", title.content_id)
+          html = r.text
 
-                  if title.latest:
-                      print("Name:", title.latest.pkg.param.name)
-                      print("Version:", title.latest.version)
-                      print("Size:", title.latest.update_size)
-                      print("System Version:", title.latest.system_version)
+          match = re.search(
+              r'Patch\s+([0-9.]+)\s*[·•]\s*([0-9.]+\s*(?:GB|MB))',
+              html,
+              re.IGNORECASE
+          )
 
-                  print("===== END RESULT =====")
-                  break
+          if not match:
+              print("❌ Could not find Fortnite patch information")
+              print(html[:5000])
+              raise SystemExit(1)
 
-              except Exception as e:
-                  print("Error:", type(e).__name__, str(e))
-                  print()
+          version = match.group(1)
+          size = match.group(2)
 
-          print("Test finished.")
+          print()
+          print("===== FORTNITE PS5 =====")
+          print("Title ID: PPSA01922")
+          print("Version:", version)
+          print("Size:", size)
+          print("========================")
+          print()
+          print("✅ Fortnite update data found.")
           PY
