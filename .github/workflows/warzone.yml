@@ -8,20 +8,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Find Prospero API request
+      - name: Test Prospero loadpatches API
         run: |
           python - <<'PY'
           import requests
           import re
+          import html
 
-          js_url = "https://prosperopatches.com/assets/js/titleview.js?v=1709144554"
+          URL = "https://prosperopatches.com/PPSA07950"
 
           print("🎮 Warzone PS5")
-          print("Downloading titleview.js...")
+          print("Opening Prospero page...")
           print()
 
           r = requests.get(
-              js_url,
+              URL,
               timeout=30,
               headers={
                   "User-Agent": "Mozilla/5.0"
@@ -29,74 +30,54 @@ jobs:
           )
 
           print("HTTP:", r.status_code)
-          print("JS size:", len(r.text))
+          print("Page size:", len(r.text))
           print()
 
           if r.status_code != 200:
-              print("❌ Could not download titleview.js")
+              print("❌ Page could not be loaded")
               raise SystemExit(1)
 
-          js = r.text
+          page = html.unescape(r.text)
 
-          print("===== API REFERENCES =====")
+          print("===== SEARCHING TITLE DATA =====")
 
           patterns = [
-              r'/api/internal[^"\']*',
-              r'apiUri[^;]*',
-              r'\.ajax\([^)]*\)',
-              r'\$\.get\([^)]*\)',
-              r'\$\.post\([^)]*\)',
-              r'fetch\([^)]*\)',
-              r'axios[^;]*'
+              r'data-titleid=["\']([^"\']+)',
+              r'data-key=["\']([^"\']+)',
+              r'data-contentver=["\']([^"\']+)',
+              r'data-title=["\']([^"\']+)'
           ]
 
-          found = False
+          values = {}
 
           for pattern in patterns:
               matches = re.findall(
                   pattern,
-                  js,
-                  re.IGNORECASE | re.DOTALL
+                  page,
+                  re.IGNORECASE
               )
 
+              print()
+              print("PATTERN:", pattern)
+
               if matches:
-                  print()
-                  print("PATTERN:", pattern)
-
-                  for match in matches[:20]:
-                      print(match[:2000])
-
-                  found = True
+                  for value in matches[:20]:
+                      print(value)
+              else:
+                  print("NOT FOUND")
 
           print()
-          print("===== SEARCH AROUND 'patch' =====")
+          print("===== SEARCHING AROUND data-titleid =====")
 
-          for keyword in [
-              "patch",
-              "title",
-              "apiUri",
-              "lastupdated",
-              "patch-container"
-          ]:
-              positions = [
-                  m.start()
-                  for m in re.finditer(
-                      re.escape(keyword),
-                      js,
-                      re.IGNORECASE
-                  )
-              ]
-
-              if positions:
-                  print()
-                  print("KEYWORD:", keyword)
-
-                  for pos in positions[:5]:
-                      print(js[max(0, pos - 500):pos + 1500])
-
-          if not found:
+          for match in re.finditer(
+              r'data-titleid',
+              page,
+              re.IGNORECASE
+          ):
+              pos = match.start()
+              print(page[max(0, pos - 500):pos + 2000])
               print()
-              print("❌ No API request pattern found.")
+              break
 
           print()
           print("===== TEST FINISHED =====")
