@@ -1,57 +1,208 @@
-name: Telegram Bot Commands Test
+name: Telegram Bot Commands
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * *"
 
 permissions:
   contents: read
 
 jobs:
-  test:
+  bot:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Test Telegram connection
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check Telegram commands
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
           python - <<'PY'
           import requests
           import os
+          import time
 
-          token = os.environ.get("BOT_TOKEN", "")
+          BOT_TOKEN = os.environ["BOT_TOKEN"]
+          CHAT_ID = str(os.environ["CHAT_ID"])
 
-          print("Token exists:", bool(token))
-          print("Token length:", len(token))
+          API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-          if not token:
-              print("❌ BOT_TOKEN is empty")
-              raise SystemExit(1)
+          print("🤖 Telegram command checker started")
 
-          url = f"https://api.telegram.org/bot{token}/getMe"
+          # ---------------------------------------------
+          # Read Telegram messages
+          # ---------------------------------------------
 
           response = requests.get(
-              url,
+              API + "/getUpdates",
+              params={
+                  "timeout": 10,
+                  "allowed_updates": '["message"]'
+              },
               timeout=20
           )
 
           print("Telegram HTTP:", response.status_code)
 
           if response.status_code != 200:
-              print("❌ Telegram connection failed")
               print(response.text)
               raise SystemExit(1)
 
           data = response.json()
 
           if not data.get("ok"):
-              print("❌ Telegram returned failure")
               print(data)
               raise SystemExit(1)
 
-          bot = data["result"]
+          updates = data.get("result", [])
 
-          print("✅ Telegram connection works")
-          print("Bot username:", bot.get("username"))
-          print("Bot name:", bot.get("first_name"))
+          print("Telegram updates:", len(updates))
+
+          # ---------------------------------------------
+          # Read saved versions
+          # ---------------------------------------------
+
+          def read_file(filename):
+
+              if not os.path.exists(filename):
+                  return None
+
+              with open(
+                  filename,
+                  "r",
+                  encoding="utf-8"
+              ) as f:
+                  return f.read().strip()
+
+          ps5_version = read_file(
+              "ps5_system_version.txt"
+          )
+
+          warzone_version = read_file(
+              "warzone_version.txt"
+          )
+
+          fortnite_version = read_file(
+              "fortnite_version.txt"
+          )
+
+          print("PS5:", ps5_version)
+          print("Warzone:", warzone_version)
+          print("Fortnite:", fortnite_version)
+
+          # ---------------------------------------------
+          # Process Telegram messages
+          # ---------------------------------------------
+
+          for update in updates:
+
+              message = update.get("message", {})
+
+              text = message.get("text", "")
+
+              chat_id = str(
+                  message.get("chat", {}).get("id", "")
+              )
+
+              if not text:
+                  continue
+
+              if chat_id != CHAT_ID:
+                  continue
+
+              command = text.strip().split()[0].lower()
+
+              if command != "/updates":
+                  continue
+
+              print("📥 /updates received")
+
+              # -----------------------------------------
+              # PS5
+              # -----------------------------------------
+
+              if ps5_version:
+
+                  ps5_message = f"""⚙️ PS5 SYSTEM SOFTWARE
+
+          Version: {ps5_version}"""
+
+              else:
+
+                  ps5_message = """⚙️ PS5 SYSTEM SOFTWARE
+
+          ❌ اطلاعات نسخه موجود نیست"""
+
+              # -----------------------------------------
+              # Warzone
+              # -----------------------------------------
+
+              if warzone_version:
+
+                  warzone_message = f"""🔫 CALL OF DUTY: WARZONE
+
+          Version: {warzone_version}
+
+          📦 جزئیات حجم و Firmware فعلاً در فایل ذخیره نشده."""
+
+              else:
+
+                  warzone_message = """🔫 CALL OF DUTY: WARZONE
+
+          ❌ اطلاعات نسخه موجود نیست"""
+
+              # -----------------------------------------
+              # Fortnite
+              # -----------------------------------------
+
+              if fortnite_version:
+
+                  fortnite_message = f"""🟣 FORTNITE
+
+          Version: {fortnite_version}
+
+          📦 جزئیات حجم فعلاً در فایل ذخیره نشده."""
+
+              else:
+
+                  fortnite_message = """🟣 FORTNITE
+
+          ❌ اطلاعات نسخه موجود نیست"""
+
+              # -----------------------------------------
+              # Send 3 separate messages
+              # -----------------------------------------
+
+              for msg in [
+                  ps5_message,
+                  warzone_message,
+                  fortnite_message
+              ]:
+
+                  send = requests.post(
+                      API + "/sendMessage",
+                      data={
+                          "chat_id": CHAT_ID,
+                          "text": msg
+                      },
+                      timeout=20
+                  )
+
+                  print(
+                      "Send HTTP:",
+                      send.status_code
+                  )
+
+                  if send.status_code != 200:
+                      print(send.text)
+
+                  time.sleep(0.5)
+
+              print("✅ 3 messages sent")
+
+          print("🤖 Telegram command checker finished")
           PY
