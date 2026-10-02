@@ -1,4 +1,4 @@
-name: Warzone Update Test
+name: Warzone API Test
 
 on:
   workflow_dispatch:
@@ -8,19 +8,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check Warzone PS5
+      - name: Find Prospero API
         run: |
           python - <<'PY'
           import requests
           import re
-          import json
+          from urllib.parse import urljoin
 
-          title_id = "PPSA07950"
-          url = f"https://prosperopatches.com/{title_id}"
+          url = "https://prosperopatches.com/PPSA01649"
 
-          print("🎮 Call of Duty: Warzone")
-          print("Title ID:", title_id)
-          print("Source:", url)
+          print("🎮 Warzone PS5")
+          print("Page:", url)
           print()
 
           r = requests.get(
@@ -32,26 +30,35 @@ jobs:
           )
 
           print("HTTP:", r.status_code)
-          print("Page size:", len(r.text))
+          print("HTML size:", len(r.text))
           print()
-
-          if r.status_code != 200:
-              print("❌ Failed to access ProsperoPatches")
-              raise SystemExit(1)
 
           html = r.text
 
-          print("===== SEARCHING PAGE =====")
+          print("===== SCRIPT FILES =====")
+
+          scripts = re.findall(
+              r'<script[^>]+src=["\']([^"\']+)["\']',
+              html,
+              re.IGNORECASE
+          )
+
+          if not scripts:
+              print("No external JavaScript files found.")
+          else:
+              for src in scripts:
+                  full_url = urljoin(url, src)
+                  print(full_url)
+
+          print()
+          print("===== API / JSON REFERENCES =====")
 
           patterns = [
-              r'Patch\s+([0-9.]+)',
-              r'Version\s*:?\s*([0-9.]+)',
-              r'([0-9.]+)\s*GB',
-              r'([0-9.]+)\s*MB',
-              r'PPSA07950'
+              r'https?://[^"\']+',
+              r'["\']([^"\']*(?:api|json|patch|update)[^"\']*)["\']'
           ]
 
-          found = False
+          found = set()
 
           for pattern in patterns:
               matches = re.findall(
@@ -60,33 +67,41 @@ jobs:
                   re.IGNORECASE
               )
 
-              if matches:
-                  print("Pattern:", pattern)
-                  print("Matches:", matches[:20])
+              for item in matches:
+                  if isinstance(item, tuple):
+                      item = item[0]
+
+                  if any(x in item.lower() for x in [
+                      "api",
+                      "json",
+                      "patch",
+                      "update"
+                  ]):
+                      found.add(item)
+
+          if found:
+              for item in sorted(found):
+                  print(item)
+          else:
+              print("No obvious API references found.")
+
+          print()
+          print("===== IMPORTANT PAGE TEXT =====")
+
+          for keyword in [
+              "Loading patches",
+              "fetch(",
+              "axios",
+              "/api/",
+              ".json",
+              "patches"
+          ]:
+              pos = html.lower().find(keyword.lower())
+
+              if pos != -1:
                   print()
-                  found = True
-
-          if not found:
-              print("❌ No version/size data found in initial HTML.")
-              print()
-              print("This may mean Prospero loads the patch list dynamically.")
-
-              print()
-              print("===== RELEVANT HTML =====")
-
-              for keyword in [
-                  "PPSA07950",
-                  "patch",
-                  "version",
-                  "json",
-                  "api"
-              ]:
-                  pos = html.lower().find(keyword.lower())
-
-                  if pos != -1:
-                      print()
-                      print("Keyword:", keyword)
-                      print(html[max(0, pos - 300):pos + 1000])
+                  print("Keyword:", keyword)
+                  print(html[max(0, pos - 500):pos + 1500])
 
           print()
           print("===== TEST FINISHED =====")
