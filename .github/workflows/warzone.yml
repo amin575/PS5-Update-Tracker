@@ -1,62 +1,75 @@
-name: Warzone API Test
+name: Warzone Update Tracker
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: write
 
 jobs:
   check:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Test Prospero API exactly
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check Warzone update
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
           python - <<'PY'
           import requests
           import json
+          import os
+          import subprocess
 
           BASE = "https://prosperopatches.com"
           PAGE = BASE + "/PPSA07950"
           API = BASE + "/api/internal/loadpatches"
 
-          titleid = "PPSA07950"
-          key = "db36a93c8bdfcc99c6c0170671c3b49d75a9873eb3c634fde0ab26392353a299"
+          TITLE_ID = "PPSA07950"
+          KEY = "db36a93c8bdfcc99c6c0170671c3b49d75a9873eb3c634fde0ab26392353a299"
+
+          STATE_FILE = "warzone_version.txt"
+
+          BOT_TOKEN = os.environ["BOT_TOKEN"]
+          CHAT_ID = os.environ["CHAT_ID"]
+
+          print("🎮 Warzone PS5")
+          print("Checking:", API)
+          print()
 
           session = requests.Session()
 
           session.headers.update({
-              "User-Agent": "Mozilla/5.0",
-              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+              "User-Agent": "Mozilla/5.0"
           })
 
-          print("🎮 Warzone PS5")
-          print("Opening page...")
-          print()
-
+          # Open Prospero page first
           page = session.get(
               PAGE,
               timeout=30
           )
 
           print("Page HTTP:", page.status_code)
-          print("Cookies:", session.cookies.get_dict())
-          print()
 
           if page.status_code != 200:
-              raise SystemExit("Could not open Prospero page")
+              print("❌ Failed to open Prospero page")
+              raise SystemExit(1)
 
+          # Same request format used by Prospero's JavaScript
           payload = {
-              "titleid": titleid,
-              "key": key
+              "titleid": TITLE_ID,
+              "key": KEY
           }
 
           body = json.dumps(payload)
-
-          print("===== REQUEST =====")
-          print("URL:", API)
-          print("Method: POST")
-          print("Content-Type: application/x-www-form-urlencoded; charset=UTF-8")
-          print("Body:", body)
-          print()
 
           response = session.post(
               API,
@@ -72,11 +85,184 @@ jobs:
               }
           )
 
-          print("===== RESPONSE =====")
-          print("HTTP:", response.status_code)
-          print("Size:", len(response.text))
+          print("API HTTP:", response.status_code)
+
+          if response.status_code != 200:
+              print("❌ Warzone API request failed")
+              print(response.text)
+              raise SystemExit(1)
+
+          try:
+              data = response.json()
+          except Exception:
+              print("❌ API returned invalid JSON")
+              print(response.text)
+              raise SystemExit(1)
+
+          if not data.get("success"):
+              print("❌ API returned failure")
+              print(data)
+              raise SystemExit(1)
+
+          patches = data.get("patches", [])
+
+          if not patches:
+              print("❌ No Warzone patches found")
+              raise SystemExit(1)
+
+          latest = patches[0]
+
+          version = latest.get("content_ver")
+          size = latest.get("filesize")
+          firmware = latest.get("required_firmware")
+          import_date = latest.get("import_date")
+
+          if not version:
+              print("❌ Could not find current version")
+              raise SystemExit(1)
+
+          print("Current version:", version)
+          print("Current size:", size)
+          print("Required firmware:", firmware)
+          print("Import date:", import_date)
           print()
-          print(response.text)
+
+          old_version = ""
+
+          if os.path.exists(STATE_FILE):
+              with open(STATE_FILE, "r") as f:
+                  old_version = f.read().strip()
+
+          print(
+              "Previous version:",
+              old_version if old_version else "None"
+          )
+
+          # First run: save current version without notification
+          if not old_version:
+
+              print("First run - saving version")
+
+              with open(STATE_FILE, "w") as f:
+                  f.write(version)
+
+          # New version detected
+          elif old_version != version:
+
+              print("🆕 NEW WARZONE UPDATE DETECTED")
+
+              message = f"""🎮 PS5 UPDATE
+
+          Call of Duty: Warzone
+
+          Version: {version}
+          Size: {size}
+
+          🆕 Update جدید شناسایی شد"""
+
+              telegram_url = (
+                  f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+              )
+
+              telegram_response = requests.post(
+                  telegram_url,
+                  data={
+                      "chat_id": CHAT_ID,
+                      "text": message
+                  },
+                  timeout=30
+              )
+
+              print(
+                  "Telegram HTTP:",
+                  telegram_response.status_code
+              )
+
+              if telegram_response.status_code != 200:
+                  print("❌ Telegram notification failed")
+                  print(telegram_response.text)
+                  raise SystemExit(1)
+
+              print("Telegram notification sent")
+
+              with open(STATE_FILE, "w") as f:
+                  f.write(version)
+
+          else:
+
+              print("No new Warzone update")
+
           print()
-          print("===== DONE =====")
+          print("Updating repository state...")
+
+          subprocess.run(
+              [
+                  "git",
+                  "config",
+                  "user.name",
+                  "github-actions[bot]"
+              ],
+              check=True
+          )
+
+          subprocess.run(
+              [
+                  "git",
+                  "config",
+                  "user.email",
+                  "41898282+github-actions[bot]@users.noreply.github.com"
+              ],
+              check=True
+          )
+
+          subprocess.run(
+              ["git", "add", STATE_FILE],
+              check=True
+          )
+
+          result = subprocess.run(
+              ["git", "diff", "--cached", "--quiet"]
+          )
+
+          if result.returncode != 0:
+
+              subprocess.run(
+                  [
+                      "git",
+                      "commit",
+                      "-m",
+                      "Update Warzone version"
+                  ],
+                  check=True
+              )
+
+              subprocess.run(
+                  [
+                      "git",
+                      "pull",
+                      "--rebase",
+                      "origin",
+                      "main"
+                  ],
+                  check=True
+              )
+
+              subprocess.run(
+                  [
+                      "git",
+                      "push",
+                      "origin",
+                      "main"
+                  ],
+                  check=True
+              )
+
+              print("Version state saved successfully")
+
+          else:
+
+              print("No repository changes")
+
+          print()
+          print("Warzone tracker finished")
           PY
