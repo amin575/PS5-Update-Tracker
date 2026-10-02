@@ -1,0 +1,266 @@
+name: GTA VI Update Tracker
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check GTA VI update
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          python - <<'PY'
+          import requests
+          import json
+          import os
+          import subprocess
+
+          BASE = "https://prosperopatches.com"
+          PAGE = BASE + "/PPSA01547"
+          API = BASE + "/api/internal/loadpatches"
+
+          TITLE_ID = "PPSA01547"
+
+          KEY = "db36a93c8bdfcc99c6c0170671c3b49d75a9873eb3c634fde0ab26392353a299"
+
+          STATE_FILE = "gta_version.txt"
+
+          BOT_TOKEN = os.environ["BOT_TOKEN"]
+          CHAT_ID = os.environ["CHAT_ID"]
+
+          print("🎮 GTA VI PS5")
+          print("Checking:", API)
+          print()
+
+          session = requests.Session()
+
+          session.headers.update({
+              "User-Agent": "Mozilla/5.0"
+          })
+
+          page = session.get(
+              PAGE,
+              timeout=30
+          )
+
+          print("Page HTTP:", page.status_code)
+
+          if page.status_code != 200:
+              print("❌ Failed to open Prospero page")
+              raise SystemExit(1)
+
+          payload = {
+              "titleid": TITLE_ID,
+              "key": KEY
+          }
+
+          body = json.dumps(payload)
+
+          response = session.post(
+              API,
+              data=body,
+              timeout=30,
+              headers={
+                  "User-Agent": "Mozilla/5.0",
+                  "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                  "Accept": "application/json",
+                  "Referer": PAGE,
+                  "Origin": BASE,
+                  "X-Requested-With": "XMLHttpRequest"
+              }
+          )
+
+          print("API HTTP:", response.status_code)
+
+          if response.status_code != 200:
+              print("❌ GTA VI API request failed")
+              print(response.text)
+              raise SystemExit(1)
+
+          try:
+              data = response.json()
+          except Exception:
+              print("❌ API returned invalid JSON")
+              print(response.text)
+              raise SystemExit(1)
+
+          if not data.get("success"):
+              print("❌ API returned failure")
+              print(data)
+              raise SystemExit(1)
+
+          patches = data.get("patches", [])
+
+          if not patches:
+              print("❌ No GTA VI patches found")
+              raise SystemExit(1)
+
+          latest = patches[0]
+
+          version = latest.get("content_ver")
+          size = latest.get("filesize")
+          firmware = latest.get("required_firmware")
+          import_date = latest.get("import_date")
+
+          if not version:
+              print("❌ Could not find current GTA VI version")
+              raise SystemExit(1)
+
+          print("Current version:", version)
+          print("Current size:", size)
+          print("Required firmware:", firmware)
+          print("Import date:", import_date)
+          print()
+
+          old_version = ""
+
+          if os.path.exists(STATE_FILE):
+              with open(STATE_FILE, "r") as f:
+                  old_version = f.read().strip()
+
+          print(
+              "Previous version:",
+              old_version if old_version else "None"
+          )
+
+          # First run: save current version without notification
+          if not old_version:
+
+              print("First run - saving version")
+
+              with open(STATE_FILE, "w") as f:
+                  f.write(version)
+
+          # New version detected
+          elif old_version != version:
+
+              print("🆕 NEW GTA VI UPDATE DETECTED")
+
+              message = f"""🎮 GTA VI PS5
+
+Version: {version}
+Size: {size}
+Import Date: {import_date}
+
+🆕 دیتای جدید GTA VI شناسایی شد"""
+
+              telegram_url = (
+                  f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+              )
+
+              telegram_response = requests.post(
+                  telegram_url,
+                  data={
+                      "chat_id": CHAT_ID,
+                      "text": message
+                  },
+                  timeout=30
+              )
+
+              print(
+                  "Telegram HTTP:",
+                  telegram_response.status_code
+              )
+
+              if telegram_response.status_code != 200:
+                  print("❌ Telegram notification failed")
+                  print(telegram_response.text)
+                  raise SystemExit(1)
+
+              print("Telegram notification sent")
+
+              with open(STATE_FILE, "w") as f:
+                  f.write(version)
+
+          else:
+
+              print("No new GTA VI update")
+
+          print()
+          print("Updating repository state...")
+
+          subprocess.run(
+              [
+                  "git",
+                  "config",
+                  "user.name",
+                  "github-actions[bot]"
+              ],
+              check=True
+          )
+
+          subprocess.run(
+              [
+                  "git",
+                  "config",
+                  "user.email",
+                  "41898282+github-actions[bot]@users.noreply.github.com"
+              ],
+              check=True
+          )
+
+          subprocess.run(
+              ["git", "add", STATE_FILE],
+              check=True
+          )
+
+          result = subprocess.run(
+              ["git", "diff", "--cached", "--quiet"]
+          )
+
+          if result.returncode != 0:
+
+              subprocess.run(
+                  [
+                      "git",
+                      "commit",
+                      "-m",
+                      "Update GTA VI version"
+                  ],
+                  check=True
+              )
+
+              subprocess.run(
+                  [
+                      "git",
+                      "pull",
+                      "--rebase",
+                      "origin",
+                      "main"
+                  ],
+                  check=True
+              )
+
+              subprocess.run(
+                  [
+                      "git",
+                      "push",
+                      "origin",
+                      "main"
+                  ],
+                  check=True
+              )
+
+              print("GTA VI version state saved successfully")
+
+          else:
+
+              print("No repository changes")
+
+          print()
+          print("GTA VI tracker finished")
+          PY
