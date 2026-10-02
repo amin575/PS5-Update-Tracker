@@ -10,11 +10,11 @@ jobs:
     steps:
       - name: Check Fortnite PS5
         run: |
-          python - <<'PY'
-          import requests
-          import urllib3
+          python -m pip install --upgrade pip
+          pip install ps5-updates
 
-          urllib3.disable_warnings()
+          python - <<'PY'
+          from ps5_updates import title as ps5up
 
           title_id = "PPSA01922"
 
@@ -22,34 +22,37 @@ jobs:
           print("Title ID:", title_id)
           print()
 
-          search_urls = [
+          # Known PS5 version.xml URL format.
+          # This test checks whether a direct title endpoint is available.
+          urls = [
               f"https://sgst.prod.dl.playstation.net/sgst/prod/00/np/{title_id}_00/",
               f"https://sgst.prod.dl.playstation.net/sgst/prod/00/np/{title_id}/"
           ]
 
-          for url in search_urls:
+          for url in urls:
               print("Trying:", url)
 
               try:
-                  r = requests.get(
-                      url,
-                      timeout=20,
-                      verify=False
-                  )
+                  title = ps5up.Ps5TitleUpdate.from_url(url)
+                  title.get_update()
 
-                  print("HTTP:", r.status_code)
-                  print("Size:", len(r.content))
                   print()
+                  print("===== RESULT =====")
+                  print("Title ID:", title.title_id)
+                  print("Content ID:", title.content_id)
 
-                  if r.status_code == 200:
-                      print("===== RESPONSE =====")
-                      print(r.text[:10000])
-                      print("===== END RESPONSE =====")
-                      break
+                  if title.latest:
+                      print("Name:", title.latest.pkg.param.name)
+                      print("Version:", title.latest.version)
+                      print("Size:", title.latest.update_size)
+                      print("System Version:", title.latest.system_version)
+
+                  print("===== END RESULT =====")
+                  break
 
               except Exception as e:
-                  print("Error:", e)
+                  print("Error:", type(e).__name__, str(e))
+                  print()
 
-          print()
           print("Test finished.")
           PY
