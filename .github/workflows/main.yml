@@ -28,15 +28,40 @@ jobs:
 
           root = ET.fromstring(r.text)
 
-          print("Sony XML received successfully")
-          print("XML size:", len(r.content))
+          # پیدا کردن آخرین Firmware
+          systems = root.findall(".//system_pup")
 
-          requests.post(
+          if not systems:
+              raise Exception("No PS5 firmware found in XML")
+
+          system = systems[-1]
+
+          version = system.attrib.get("label", "Unknown")
+
+          image = system.find(".//image")
+
+          if image is None:
+              raise Exception("Firmware image not found")
+
+          size = int(image.attrib.get("size", "0"))
+          size_gb = size / 1024 / 1024 / 1024
+
+          message = (
+              "🟦 PS5 SYSTEM SOFTWARE\n\n"
+              f"Version: {version}\n"
+              f"Size: {size_gb:.2f} GB"
+          )
+
+          response = requests.post(
               f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
               data={
                   "chat_id": CHAT_ID,
-                  "text": "✅ Sony PS5 update server connected successfully!"
+                  "text": message
               },
               timeout=20
           )
+
+          response.raise_for_status()
+
+          print(message)
           PY
