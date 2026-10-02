@@ -1,4 +1,4 @@
-name: GTA VI Find API
+name: GTA VI Find API Details
 
 on:
   workflow_dispatch:
@@ -8,80 +8,48 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Find Prospero API
+      - name: Extract API details
         run: |
           python3 - <<'PY'
           import requests
           import re
 
-          files = [
-              "https://prosperopatches.com/assets/js/scripts.js?v=1709144554",
-              "https://prosperopatches.com/assets/js/homepage.js?v=1709144554"
+          url = "https://prosperopatches.com/assets/js/scripts.js?v=1709144554"
+
+          r = requests.get(
+              url,
+              headers={"User-Agent": "Mozilla/5.0"},
+              timeout=30
+          )
+
+          js = r.text
+
+          print("HTTP:", r.status_code)
+          print("SIZE:", len(js))
+          print()
+
+          patterns = [
+              r'.{0,1000}apiUri.{0,1500}',
+              r'.{0,1000}endpoint.{0,2000}',
+              r'.{0,1000}dynamicresponse.{0,2000}',
+              r'.{0,1000}submitData.{0,1500}'
           ]
 
-          keywords = [
-              "httpPost",
-              "httpGet",
-              "loadpatches",
-              "/api/",
-              "fetch(",
-              "$.ajax",
-              "ajax(",
-              "titleid",
-              "dynpatch",
-              "patches",
-              "patch"
-          ]
-
-          for url in files:
-
-              print()
-              print("=" * 80)
-              print(url)
+          for pattern in patterns:
               print("=" * 80)
 
-              r = requests.get(
-                  url,
-                  headers={"User-Agent": "Mozilla/5.0"},
-                  timeout=30
+              matches = re.findall(
+                  pattern,
+                  js,
+                  re.IGNORECASE | re.DOTALL
               )
 
-              print("HTTP:", r.status_code)
-              print("SIZE:", len(r.text))
-              print()
-
-              js = r.text
-              found_positions = set()
-
-              for keyword in keywords:
-
-                  pos = 0
-
-                  while True:
-
-                      pos = js.lower().find(keyword.lower(), pos)
-
-                      if pos == -1:
-                          break
-
-                      # جلوگیری از چاپ چندباره همان قسمت
-                      block_start = max(0, pos - 600)
-                      block_end = min(len(js), pos + 1200)
-
-                      key = (block_start, block_end)
-
-                      if key not in found_positions:
-
-                          found_positions.add(key)
-
-                          print()
-                          print(f"--- MATCH: {keyword} ---")
-                          print(js[block_start:block_end])
-                          print("--- END ---")
-
-                      pos += len(keyword)
-
-              if not found_positions:
-                  print("NO MATCHES")
+              if matches:
+                  for m in matches:
+                      print(m)
+                      print()
+              else:
+                  print("NO MATCH")
+                  print()
 
           PY
