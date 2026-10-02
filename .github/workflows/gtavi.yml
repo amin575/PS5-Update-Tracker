@@ -1,124 +1,36 @@
-name: GTA VI Update Tracker
+name: GTA VI Utils Inspect
 
 on:
   workflow_dispatch:
 
 jobs:
-  check:
+  inspect:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Inspect Prospero scripts
+      - name: Read Prospero utils.js
         run: |
           python3 - <<'PY'
           import requests
-          import re
-          from urllib.parse import urljoin
 
-          page_url = "https://prosperopatches.com/PPSA01547"
+          url = "https://prosperopatches.com/assets/js/utils.js?v=1709144554"
 
-          headers = {
-              "User-Agent": "Mozilla/5.0"
-          }
-
-          print("Opening GTA VI page...")
+          print("Downloading utils.js...")
+          print(url)
+          print()
 
           r = requests.get(
-              page_url,
-              headers=headers,
+              url,
+              headers={
+                  "User-Agent": "Mozilla/5.0"
+              },
               timeout=30
           )
 
           print("HTTP:", r.status_code)
           print("SIZE:", len(r.text))
           print()
-
-          if r.status_code != 200:
-              raise SystemExit("Page request failed")
-
-          scripts = re.findall(
-              r'<script[^>]+src=["\']([^"\']+)["\']',
-              r.text,
-              re.I
-          )
-
-          print("JavaScript files found:", len(scripts))
-          print()
-
-          for src in scripts:
-
-              url = urljoin(page_url, src)
-
-              print("--------------------------------")
-              print("SCRIPT:")
-              print(url)
-
-              try:
-
-                  js = requests.get(
-                      url,
-                      headers=headers,
-                      timeout=30
-                  )
-
-                  print("HTTP:", js.status_code)
-                  print("SIZE:", len(js.text))
-
-                  text = js.text.lower()
-
-                  keywords = [
-                      "loadpatches",
-                      "dynpatch",
-                      "titleid",
-                      "data-loadparams",
-                      "/api/internal",
-                      "prosperopatches"
-                  ]
-
-                  found = []
-
-                  for word in keywords:
-                      if word in text:
-                          found.append(word)
-
-                  if found:
-                      print("MATCHES:", ", ".join(found))
-
-                      original = js.text
-
-                      for word in keywords:
-
-                          positions = [
-                              m.start()
-                              for m in re.finditer(
-                                  re.escape(word),
-                                  original,
-                                  re.I
-                              )
-                          ]
-
-                          for pos in positions[:5]:
-
-                              start = max(0, pos - 500)
-                              end = min(
-                                  len(original),
-                                  pos + 1000
-                              )
-
-                              print()
-                              print(
-                                  "===== CONTEXT:",
-                                  word,
-                                  "====="
-                              )
-                              print(
-                                  original[start:end]
-                              )
-
-              except Exception as e:
-
-                  print("ERROR:", e)
-
-          print()
-          print("Inspection finished.")
+          print("========== utils.js ==========")
+          print(r.text)
+          print("========== END ==========")
           PY
