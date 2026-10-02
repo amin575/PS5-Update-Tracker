@@ -1,0 +1,67 @@
+name: Warzone Update Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Warzone update
+        run: |
+          python - <<'PY'
+          import requests
+          import re
+
+          urls = [
+              "https://framepatch.app/games/call-of-duty-warzone",
+              "https://framepatch.app/games/warzone",
+              "https://framepatch.app/games/call-of-duty-modern-warfare-iii"
+          ]
+
+          found = False
+
+          for url in urls:
+              print("Trying:", url)
+
+              try:
+                  r = requests.get(url, timeout=30)
+
+                  print("HTTP:", r.status_code)
+
+                  if r.status_code != 200:
+                      continue
+
+                  html = r.text
+
+                  matches = re.findall(
+                      r'Patch\s+([0-9.]+)\s*[·•]\s*([0-9.]+\s*(?:GB|MB))',
+                      html,
+                      re.IGNORECASE
+                  )
+
+                  if matches:
+                      print()
+                      print("===== WARZONE / COD =====")
+
+                      for version, size in matches[:10]:
+                          print("Version:", version)
+                          print("Size:", size)
+
+                      print("=========================")
+
+                      found = True
+                      break
+
+              except Exception as e:
+                  print("Error:", e)
+
+          if not found:
+              print()
+              print("❌ No suitable Warzone page/data found.")
+              print("This was only a test and did not modify the Fortnite tracker.")
+
+          print()
+          print("Test finished.")
+          PY
