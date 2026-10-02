@@ -2,49 +2,23 @@ name: PS5 System Update Tracker
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "*/30 * * * *"
 
 jobs:
   check:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check PS5 firmware
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
+      - name: Test Sony server
         run: |
           python - <<'PY'
           import requests
-          import xml.etree.ElementTree as ET
 
           url = "http://fus01.ps5.update.playstation.net/update/ps5/official/tJMRE80IbXnE9YuG0jzTXgKEjIMoabr6/list/us/updatelist.xml"
 
           r = requests.get(url, timeout=20)
-          r.raise_for_status()
 
-          root = ET.fromstring(r.text)
-
-          system = root.find(".//system_pup")
-          version = system.attrib.get("label", "Unknown")
-          image = system.find(".//image")
-
-          size = int(image.attrib.get("size", "0"))
-          size_gb = size / 1024 / 1024 / 1024
-
-          message = (
-              "🟦 PS5 SYSTEM SOFTWARE\n\n"
-              f"Version: {version}\n"
-              f"Size: {size_gb:.2f} GB"
-          )
-
-          requests.post(
-              f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-              data={
-                  "chat_id": CHAT_ID,
-                  "text": message
-              },
-              timeout=20
-          )
+          print("HTTP STATUS:", r.status_code)
+          print("CONTENT LENGTH:", len(r.content))
+          print("FIRST 500 CHARACTERS:")
+          print(r.text[:500])
           PY
