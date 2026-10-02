@@ -1,0 +1,198 @@
+name: Telegram Bot Commands
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  bot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check Telegram commands
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          python - <<'PY'
+          import requests
+          import os
+          import json
+          import time
+
+          BOT_TOKEN = os.environ["BOT_TOKEN"]
+          CHAT_ID = str(os.environ["CHAT_ID"])
+
+          API = f"https://api.telegram.org/bot{BOT_TOKEN}"
+
+          print("🤖 Telegram command checker started")
+
+          # --------------------------------------------------
+          # Get Telegram messages
+          # --------------------------------------------------
+
+          response = requests.get(
+              API + "/getUpdates",
+              params={
+                  "timeout": 10,
+                  "allowed_updates": json.dumps(["message"])
+              },
+              timeout=20
+          )
+
+          if response.status_code != 200:
+              print("❌ Telegram API error")
+              print(response.text)
+              raise SystemExit(1)
+
+          data = response.json()
+
+          if not data.get("ok"):
+              print("❌ Telegram returned failure")
+              print(data)
+              raise SystemExit(1)
+
+          updates = data.get("result", [])
+
+          print("Telegram updates:", len(updates))
+
+          # --------------------------------------------------
+          # Read saved update information
+          # --------------------------------------------------
+
+          def read_file(filename):
+
+              if not os.path.exists(filename):
+                  return None
+
+              with open(
+                  filename,
+                  "r",
+                  encoding="utf-8"
+              ) as f:
+                  return f.read().strip()
+
+          ps5 = read_file("ps5_latest.txt")
+          warzone = read_file("warzone_latest.txt")
+          fortnite = read_file("fortnite_latest.txt")
+
+          # --------------------------------------------------
+          # Process commands
+          # --------------------------------------------------
+
+          for update in updates:
+
+              message = update.get("message", {})
+              text = message.get("text", "")
+              chat_id = str(
+                  message.get("chat", {}).get("id", "")
+              )
+
+              if not text:
+                  continue
+
+              if chat_id != CHAT_ID:
+                  print("Ignoring another chat")
+                  continue
+
+              command = text.strip().split()[0].lower()
+
+              if command != "/updates":
+                  continue
+
+              print("📥 /updates received")
+
+              # ------------------------------------------------
+              # PS5
+              # ------------------------------------------------
+
+              if ps5:
+
+                  ps5_message = (
+                      "⚙️ PS5 SYSTEM SOFTWARE\n\n"
+                      + ps5
+                  )
+
+              else:
+
+                  ps5_message = (
+                      "⚙️ PS5 SYSTEM SOFTWARE\n\n"
+                      "❌ اطلاعات ذخیره‌شده موجود نیست"
+                  )
+
+              # ------------------------------------------------
+              # Warzone
+              # ------------------------------------------------
+
+              if warzone:
+
+                  warzone_message = (
+                      "🔫 CALL OF DUTY: WARZONE\n\n"
+                      + warzone
+                  )
+
+              else:
+
+                  warzone_message = (
+                      "🔫 CALL OF DUTY: WARZONE\n\n"
+                      "❌ اطلاعات ذخیره‌شده موجود نیست"
+                  )
+
+              # ------------------------------------------------
+              # Fortnite
+              # ------------------------------------------------
+
+              if fortnite:
+
+                  fortnite_message = (
+                      "🟣 FORTNITE\n\n"
+                      + fortnite
+                  )
+
+              else:
+
+                  fortnite_message = (
+                      "🟣 FORTNITE\n\n"
+                      "❌ اطلاعات ذخیره‌شده موجود نیست"
+                  )
+
+              # ------------------------------------------------
+              # Send 3 separate messages
+              # ------------------------------------------------
+
+              for msg in [
+                  ps5_message,
+                  warzone_message,
+                  fortnite_message
+              ]:
+
+                  send = requests.post(
+                      API + "/sendMessage",
+                      data={
+                          "chat_id": CHAT_ID,
+                          "text": msg
+                      },
+                      timeout=20
+                  )
+
+                  print(
+                      "Telegram send:",
+                      send.status_code
+                  )
+
+                  if send.status_code != 200:
+                      print(send.text)
+
+                  time.sleep(0.5)
+
+              print("✅ 3 update messages sent")
+
+          print("🤖 Telegram command checker finished")
+          PY
