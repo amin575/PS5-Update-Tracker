@@ -1,0 +1,308 @@
+name: Save Update Details
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  save:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch update details
+        run: |
+          python - <<'PY'
+          import requests
+          import json
+          import xml.etree.ElementTree as ET
+          import re
+
+          # ==================================================
+          # PS5 SYSTEM SOFTWARE
+          # ==================================================
+
+          print("⚙️ Checking PS5 System Software")
+
+          ps5_url = (
+              "https://fus01.ps5.update.playstation.net/"
+              "update/ps5/official/"
+              "tJMRE80IbXnE9YuG0jzTXgKEjIMoabr6/"
+              "list/us/updatelist.xml"
+          )
+
+          r = requests.get(
+              ps5_url,
+              headers={"User-Agent": "Mozilla/5.0"},
+              timeout=30
+          )
+
+          print("PS5 HTTP:", r.status_code)
+
+          if r.status_code != 200:
+              raise Exception("PS5 update list failed")
+
+          root = ET.fromstring(r.text)
+
+          system_pup = root.find(".//system_pup")
+
+          if system_pup is None:
+              raise Exception("PS5 system_pup not found")
+
+          ps5_version = system_pup.attrib.get(
+              "label",
+              "Unknown"
+          )
+
+          ps5_short = system_pup.attrib.get(
+              "upd_version",
+              "Unknown"
+          )
+
+          image = system_pup.find(".//image")
+
+          if image is not None:
+              ps5_bytes = int(
+                  image.attrib.get("size", "0")
+              )
+          else:
+              ps5_bytes = 0
+
+          ps5_gb = ps5_bytes / (1024 ** 3)
+
+          ps5_text = f"""Version: {ps5_version}
+          Short Version: {ps5_short}
+          Size: {ps5_gb:.2f} GB
+          Size Bytes: {ps5_bytes}"""
+
+          with open(
+              "ps5_latest.txt",
+              "w",
+              encoding="utf-8"
+          ) as f:
+              f.write(ps5_text)
+
+          print(ps5_text)
+          print()
+
+          # ==================================================
+          # WARZONE
+          # ==================================================
+
+          print("🔫 Checking Warzone")
+
+          BASE = "https://prosperopatches.com"
+          PAGE = BASE + "/PPSA07950"
+          API = BASE + "/api/internal/loadpatches"
+
+          TITLE_ID = "PPSA07950"
+
+          KEY = (
+              "db36a93c8bdfcc99c6c0170671c3b49d75a9873eb3c634fde0ab26392353a299"
+          )
+
+          session = requests.Session()
+
+          session.headers.update({
+              "User-Agent": "Mozilla/5.0"
+          })
+
+          page = session.get(
+              PAGE,
+              timeout=30
+          )
+
+          print("Warzone page HTTP:", page.status_code)
+
+          if page.status_code != 200:
+              raise Exception("Warzone page failed")
+
+          payload = {
+              "titleid": TITLE_ID,
+              "key": KEY
+          }
+
+          response = session.post(
+              API,
+              data=json.dumps(payload),
+              timeout=30,
+              headers={
+                  "User-Agent": "Mozilla/5.0",
+                  "Content-Type":
+                      "application/x-www-form-urlencoded; charset=UTF-8",
+                  "Accept": "application/json",
+                  "Referer": PAGE,
+                  "Origin": BASE,
+                  "X-Requested-With": "XMLHttpRequest"
+              }
+          )
+
+          print("Warzone API HTTP:", response.status_code)
+
+          data = response.json()
+
+          if not data.get("success"):
+              raise Exception(
+                  "Warzone API returned failure"
+              )
+
+          patches = data.get("patches", [])
+
+          if not patches:
+              raise Exception(
+                  "No Warzone patches found"
+              )
+
+          latest = patches[0]
+
+          warzone_version = latest.get(
+              "content_ver",
+              "Unknown"
+          )
+
+          warzone_size = latest.get(
+              "filesize",
+              "Unknown"
+          )
+
+          warzone_firmware = latest.get(
+              "required_firmware",
+              "Unknown"
+          )
+
+          warzone_date = latest.get(
+              "import_date",
+              "Unknown"
+          )
+
+          warzone_text = f"""Version: {warzone_version}
+          Size: {warzone_size}
+          Required Firmware: {warzone_firmware}
+          Import Date: {warzone_date}"""
+
+          with open(
+              "warzone_latest.txt",
+              "w",
+              encoding="utf-8"
+          ) as f:
+              f.write(warzone_text)
+
+          print(warzone_text)
+          print()
+
+          # ==================================================
+          # FORTNITE
+          # ==================================================
+
+          print("🟣 Checking Fortnite")
+
+          fortnite_url = (
+              "https://framepatch.app/games/fortnite"
+          )
+
+          r = requests.get(
+              fortnite_url,
+              headers={"User-Agent": "Mozilla/5.0"},
+              timeout=30
+          )
+
+          print("Fortnite HTTP:", r.status_code)
+
+          if r.status_code != 200:
+              raise Exception(
+                  "Fortnite page failed"
+              )
+
+          html = r.text
+
+          # FramePatch page contains patch history.
+          # Grab the newest patch entry.
+
+          match = re.search(
+              r'Patch\s+([0-9]+\.[0-9]+\.[0-9]+)'
+              r'\s*[·\-]\s*'
+              r'([0-9]+(?:\.[0-9]+)?)\s*GB',
+              html,
+              re.IGNORECASE
+          )
+
+          if not match:
+
+              # Fallback: version first, size separately
+              version_match = re.search(
+                  r'Patch\s+([0-9]+\.[0-9]+\.[0-9]+)',
+                  html,
+                  re.IGNORECASE
+              )
+
+              size_match = re.search(
+                  r'Patch[^<]{0,200}?'
+                  r'([0-9]+(?:\.[0-9]+)?)\s*GB',
+                  html,
+                  re.IGNORECASE
+              )
+
+              if version_match:
+                  fortnite_version = (
+                      version_match.group(1)
+                  )
+              else:
+                  fortnite_version = "Unknown"
+
+              if size_match:
+                  fortnite_size = (
+                      size_match.group(1) + " GB"
+                  )
+              else:
+                  fortnite_size = "Unknown"
+
+          else:
+
+              fortnite_version = match.group(1)
+              fortnite_size = match.group(2) + " GB"
+
+          fortnite_text = f"""Version: {fortnite_version}
+          Size: {fortnite_size}"""
+
+          with open(
+              "fortnite_latest.txt",
+              "w",
+              encoding="utf-8"
+          ) as f:
+              f.write(fortnite_text)
+
+          print(fortnite_text)
+          print()
+
+          print("✅ Update details saved")
+          PY
+
+      - name: Save update details to repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add ps5_latest.txt
+          git add warzone_latest.txt
+          git add fortnite_latest.txt
+
+          if git diff --cached --quiet; then
+            echo "No repository changes"
+            exit 0
+          fi
+
+          git commit -m "Update latest PS5 game details"
+
+          git pull --rebase origin main
+
+          git push origin main
+
+          echo "✅ Update details committed"
