@@ -10,6 +10,6 @@ jobs:
     steps:
       - name: TEST
         run: |
-          echo "🔥 NEW CODE IS RUNNING"
+          echo "🔥 NEW CODE IS RUNNIING"
           echo "TIME:"
           date
