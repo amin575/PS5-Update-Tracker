@@ -8,63 +8,75 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Find httpPost function
+      - name: Test Prospero API exactly
         run: |
           python - <<'PY'
           import requests
-          import re
+          import json
 
-          urls = [
-              "https://prosperopatches.com/assets/js/utils.js?v=1709144554",
-              "https://prosperopatches.com/assets/js/global.js?v=1709144554",
-              "https://prosperopatches.com/assets/js/scripts.js?v=1709144554"
-          ]
+          BASE = "https://prosperopatches.com"
+          PAGE = BASE + "/PPSA07950"
+          API = BASE + "/api/internal/loadpatches"
 
-          for url in urls:
+          titleid = "PPSA07950"
+          key = "db36a93c8bdfcc99c6c0170671c3b49d75a9873eb3c634fde0ab26392353a299"
 
-              print()
-              print("=" * 70)
-              print("FILE:", url)
-              print("=" * 70)
+          session = requests.Session()
 
-              r = requests.get(
-                  url,
-                  timeout=30,
-                  headers={"User-Agent": "Mozilla/5.0"}
-              )
+          session.headers.update({
+              "User-Agent": "Mozilla/5.0",
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+          })
 
-              print("HTTP:", r.status_code)
-              print("SIZE:", len(r.text))
-              print()
+          print("🎮 Warzone PS5")
+          print("Opening page...")
+          print()
 
-              if r.status_code != 200:
-                  continue
+          page = session.get(
+              PAGE,
+              timeout=30
+          )
 
-              js = r.text
+          print("Page HTTP:", page.status_code)
+          print("Cookies:", session.cookies.get_dict())
+          print()
 
-              positions = [
-                  m.start()
-                  for m in re.finditer(
-                      r'httpPost',
-                      js,
-                      re.IGNORECASE
-                  )
-              ]
+          if page.status_code != 200:
+              raise SystemExit("Could not open Prospero page")
 
-              print("httpPost matches:", len(positions))
+          payload = {
+              "titleid": titleid,
+              "key": key
+          }
 
-              for i, pos in enumerate(positions[:10]):
+          body = json.dumps(payload)
 
-                  print()
-                  print("----- MATCH", i + 1, "-----")
+          print("===== REQUEST =====")
+          print("URL:", API)
+          print("Method: POST")
+          print("Content-Type: application/x-www-form-urlencoded; charset=UTF-8")
+          print("Body:", body)
+          print()
 
-                  print(
-                      js[
-                          max(0, pos - 1000):
-                          min(len(js), pos + 3000)
-                      ]
-                  )
+          response = session.post(
+              API,
+              data=body,
+              timeout=30,
+              headers={
+                  "User-Agent": "Mozilla/5.0",
+                  "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                  "Accept": "application/json",
+                  "Referer": PAGE,
+                  "Origin": BASE,
+                  "X-Requested-With": "XMLHttpRequest"
+              }
+          )
 
+          print("===== RESPONSE =====")
+          print("HTTP:", response.status_code)
+          print("Size:", len(response.text))
+          print()
+          print(response.text)
           print()
           print("===== DONE =====")
           PY
