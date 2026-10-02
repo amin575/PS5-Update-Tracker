@@ -1,0 +1,3 @@
+name = "ps5-updates-bot"
+main = "worker.js"
+compatibility_date = "2026-10-02"
