@@ -33,28 +33,27 @@ jobs:
           BOT_TOKEN = os.environ["BOT_TOKEN"]
           CHAT_ID = os.environ["CHAT_ID"]
 
-          print("🎮 Fortnite PS5")
+          print("Fortnite PS5")
           print("Checking:", URL)
-          print()
 
           r = requests.get(URL, timeout=30)
 
           print("HTTP:", r.status_code)
 
           if r.status_code != 200:
-              print("❌ Failed to fetch Fortnite page")
+              print("Failed to fetch Fortnite page")
               raise SystemExit(1)
 
           html = r.text
 
           match = re.search(
-              r'Patch\s+([0-9.]+)\s*[·•]\s*([0-9.]+\s*(?:GB|MB))',
+              r"Patch\s+([0-9.]+)\s*[·•]\s*([0-9.]+\s*(?:GB|MB))",
               html,
               re.IGNORECASE
           )
 
           if not match:
-              print("❌ Could not find Fortnite patch information")
+              print("Could not find Fortnite patch information")
               raise SystemExit(1)
 
           version = match.group(1)
@@ -62,7 +61,6 @@ jobs:
 
           print("Current version:", version)
           print("Current size:", size)
-          print()
 
           old_version = ""
 
@@ -72,28 +70,23 @@ jobs:
 
           print("Previous version:", old_version if old_version else "None")
 
-          # First run: save version but don't send notification
           if not old_version:
-              print()
-              print("🆕 First run detected.")
-              print("Saving current version without sending notification.")
+              print("First run - saving version")
 
               with open(STATE_FILE, "w") as f:
                   f.write(version)
 
-          # New update detected
           elif old_version != version:
-              print()
-              print("🚨 NEW FORTNITE UPDATE DETECTED!")
+              print("NEW FORTNITE UPDATE DETECTED")
 
               message = f"""🎮 PS5 UPDATE
 
-Fortnite
+          Fortnite
 
-Version: {version}
-Size: {size}
+          Version: {version}
+          Size: {size}
 
-🆕 Update جدید شناسایی شد"""
+          🆕 Update جدید شناسایی شد"""
 
               telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
@@ -109,20 +102,18 @@ Size: {size}
               print("Telegram HTTP:", response.status_code)
 
               if response.status_code != 200:
-                  print("❌ Telegram notification failed")
+                  print("Telegram notification failed")
                   print(response.text)
                   raise SystemExit(1)
 
-              print("✅ Telegram notification sent.")
+              print("Telegram notification sent")
 
               with open(STATE_FILE, "w") as f:
                   f.write(version)
 
           else:
-              print()
-              print("ℹ️ No new Fortnite update.")
+              print("No new Fortnite update")
 
-          # Commit changed version file
           result = subprocess.run(
               ["git", "status", "--porcelain"],
               capture_output=True,
@@ -136,7 +127,12 @@ Size: {size}
               )
 
               subprocess.run(
-                  ["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"],
+                  [
+                      "git",
+                      "config",
+                      "user.email",
+                      "41898282+github-actions[bot]@users.noreply.github.com"
+                  ],
                   check=True
               )
 
@@ -155,10 +151,7 @@ Size: {size}
                   check=True
               )
 
-              print("✅ Version state saved to repository.")
-          else:
-              print("ℹ️ No state changes to commit.")
+              print("Version state saved")
 
-          print()
-          print("✅ Fortnite tracker finished.")
+          print("Fortnite tracker finished")
           PY
