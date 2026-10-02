@@ -1,127 +1,347 @@
-name: GTA VI Key Capture
+name: GTA VI Update Tracker
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: write
 
 jobs:
-  capture:
+  check:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install browser
-        run: |
-          python -m pip install playwright
-          python -m playwright install chromium --with-deps
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Capture Prospero request
+      - name: Check GTA VI update
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
           python - <<'PY'
-          import asyncio
-          from playwright.async_api import async_playwright
+          import requests
+          import json
+          import os
+          import re
+          import html as html_lib
+          import subprocess
 
-          async def main():
+          BASE = "https://prosperopatches.com"
+          TITLE_ID = "PPSA01547"
+          PAGE = f"{BASE}/{TITLE_ID}"
+          API = f"{BASE}/api/internal/loadpatches"
 
-              async with async_playwright() as p:
+          STATE_FILE = "gtavi_version.txt"
 
-                  browser = await p.chromium.launch(
-                      headless=True
-                  )
+          BOT_TOKEN = os.environ["BOT_TOKEN"]
+          CHAT_ID = os.environ["CHAT_ID"]
 
-                  page = await browser.new_page()
+          print("GTA VI PS5")
+          print("Opening:", PAGE)
+          print()
 
-                  captured = []
+          session = requests.Session()
 
-                  async def response_handler(response):
+          session.headers.update({
+              "User-Agent": "Mozilla/5.0"
+          })
 
-                      url = response.url
+          page = session.get(
+              PAGE,
+              timeout=30
+          )
 
-                      if "loadpatches" in url.lower():
+          print("Page HTTP:", page.status_code)
+          print("Page size:", len(page.text))
 
-                          print()
-                          print("================================")
-                          print("LOADPATCHES REQUEST FOUND")
-                          print("================================")
-                          print("URL:")
-                          print(url)
-                          print()
+          if page.status_code != 200:
+              print("Failed to open Prospero page")
+              raise SystemExit(1)
 
-                          print("METHOD:")
-                          print(response.request.method)
-                          print()
+          page_html = page.text
+          decoded = html_lib.unescape(page_html)
 
-                          print("REQUEST HEADERS:")
-                          print(await response.request.all_headers())
-                          print()
+          dynpatch_match = re.search(
+              r'<[^>]*id=["\']dynpatch["\'][^>]*>',
+              decoded,
+              re.IGNORECASE
+          )
 
-                          try:
-                              print("POST DATA:")
-                              print(response.request.post_data)
-                          except:
-                              print("POST DATA: None")
+          if not dynpatch_match:
+              print("dynpatch element was not found")
+              raise SystemExit(1)
 
-                          print()
-                          print("RESPONSE:")
-                          
-                          try:
-                              print(await response.text())
-                          except Exception as e:
-                              print("Could not read response:", e)
+          dynpatch = dynpatch_match.group(0)
 
-                          captured.append(True)
+          print("dynpatch found.")
+          print()
 
-                  page.on(
-                      "response",
-                      response_handler
-                  )
+          loadparams_match = re.search(
+              r'data-loadparams\s*=\s*["\']([^"\']+)["\']',
+              dynpatch,
+              re.IGNORECASE
+          )
 
-                  print("Opening GTA VI Prospero page...")
+          if not loadparams_match:
+              print("data-loadparams was not found")
+              print(dynpatch)
+              raise SystemExit(1)
 
-                  try:
+          loadparams = html_lib.unescape(
+              loadparams_match.group(1)
+          )
 
-                      await page.goto(
-                          "https://prosperopatches.com/PPSA01547",
-                          wait_until="domcontentloaded",
-                          timeout=20000
-                      )
+          print("data-loadparams found.")
+          print()
 
-                  except Exception as e:
+          title_match = re.search(
+              r'["\']titleid["\']\s*:\s*["\']([A-Z0-9]+)["\']',
+              loadparams,
+              re.IGNORECASE
+          )
 
-                      print(
-                          "Page load warning:",
-                          e
-                      )
+          key_match = re.search(
+              r'["\']key["\']\s*:\s*["\']([0-9a-f]+)["\']',
+              loadparams,
+              re.IGNORECASE
+          )
 
-                  print("Page loaded.")
+          if not title_match:
+              print("titleid was not found")
+              print(loadparams)
+              raise SystemExit(1)
 
-                  # Give the site's JavaScript time
-                  # to make its API request.
-                  for i in range(20):
+          if not key_match:
+              print("Prospero key was not found")
+              print(loadparams)
+              raise SystemExit(1)
 
-                      if captured:
-                          break
+          real_title_id = title_match.group(1)
+          key = key_match.group(1)
 
-                      await page.wait_for_timeout(1000)
+          print("Title ID:", real_title_id)
+          print("Prospero key found successfully.")
+          print()
 
-                      print(
-                          "Waiting for API request...",
-                          i + 1
-                      )
+          payload = {
+              "titleid": real_title_id,
+              "key": key
+          }
 
-                  if not captured:
+          response = session.post(
+              API,
+              data=json.dumps(payload),
+              timeout=30,
+              headers={
+                  "User-Agent": "Mozilla/5.0",
+                  "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                  "Accept": "application/json",
+                  "Referer": PAGE,
+                  "Origin": BASE,
+                  "X-Requested-With": "XMLHttpRequest"
+              }
+          )
 
-                      print()
-                      print(
-                          "❌ LOADPATCHES REQUEST WAS NOT CAPTURED"
-                      )
+          print("API HTTP:", response.status_code)
 
-                  else:
+          if response.status_code != 200:
+              print("Prospero API request failed")
+              print(response.text)
+              raise SystemExit(1)
 
-                      print()
-                      print(
-                          "✅ REQUEST CAPTURED SUCCESSFULLY"
-                      )
+          try:
+              data = response.json()
+          except Exception:
+              print("Prospero returned invalid JSON")
+              print(response.text)
+              raise SystemExit(1)
 
-                  await browser.close()
+          if not data.get("success"):
+              print("Prospero API returned failure")
+              print(data)
+              raise SystemExit(1)
 
-          asyncio.run(main())
+          patches = data.get("patches", [])
+
+          if not patches:
+              print("No GTA VI patches found")
+              raise SystemExit(1)
+
+          print("Patches found:", len(patches))
+          print()
+
+          latest = next(
+              (
+                  patch
+                  for patch in patches
+                  if patch.get("is_latest")
+              ),
+              patches[0]
+          )
+
+          version = latest.get("content_ver")
+          size = latest.get("filesize")
+          firmware = latest.get("required_firmware")
+          import_date = latest.get("import_date")
+
+          if not version:
+              print("GTA VI version was not found")
+              print(latest)
+              raise SystemExit(1)
+
+          print("================================")
+          print("GTA VI CURRENT DATA")
+          print("================================")
+          print("Version:", version)
+          print("Size:", size)
+          print("Required firmware:", firmware)
+          print("Import date:", import_date)
+          print("================================")
+          print()
+
+          old_version = ""
+
+          if os.path.exists(STATE_FILE):
+              with open(STATE_FILE, "r") as f:
+                  old_version = f.read().strip()
+
+          print(
+              "Previous version:",
+              old_version if old_version else "None"
+          )
+
+          if not old_version:
+
+              print("First run - saving current version.")
+
+              with open(STATE_FILE, "w") as f:
+                  f.write(version)
+
+          elif old_version != version:
+
+              print()
+              print("NEW GTA VI UPDATE DETECTED")
+              print()
+
+              message = f"""🎮 PS5 UPDATE
+
+Grand Theft Auto VI
+
+Version: {version}
+Size: {size or "Unknown"}
+Required firmware: {firmware or "Unknown"}
+Import date: {import_date or "Unknown"}
+
+🆕 GTA VI Update جدید شناسایی شد"""
+
+              telegram_url = (
+                  f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+              )
+
+              telegram_response = requests.post(
+                  telegram_url,
+                  data={
+                      "chat_id": CHAT_ID,
+                      "text": message
+                  },
+                  timeout=30
+              )
+
+              print(
+                  "Telegram HTTP:",
+                  telegram_response.status_code
+              )
+
+              if telegram_response.status_code != 200:
+                  print("Telegram notification failed")
+                  print(telegram_response.text)
+                  raise SystemExit(1)
+
+              print("Telegram notification sent.")
+
+              with open(STATE_FILE, "w") as f:
+                  f.write(version)
+
+          else:
+
+              print("No new GTA VI update.")
+
+          print()
+          print("Updating repository state...")
+
+          subprocess.run(
+              [
+                  "git",
+                  "config",
+                  "user.name",
+                  "github-actions[bot]"
+              ],
+              check=True
+          )
+
+          subprocess.run(
+              [
+                  "git",
+                  "config",
+                  "user.email",
+                  "41898282+github-actions[bot]@users.noreply.github.com"
+              ],
+              check=True
+          )
+
+          subprocess.run(
+              ["git", "add", STATE_FILE],
+              check=True
+          )
+
+          result = subprocess.run(
+              ["git", "diff", "--cached", "--quiet"]
+          )
+
+          if result.returncode != 0:
+
+              subprocess.run(
+                  [
+                      "git",
+                      "commit",
+                      "-m",
+                      "Update GTA VI version"
+                  ],
+                  check=True
+              )
+
+              subprocess.run(
+                  [
+                      "git",
+                      "pull",
+                      "--rebase",
+                      "origin",
+                      "main"
+                  ],
+                  check=True
+              )
+
+              subprocess.run(
+                  [
+                      "git",
+                      "push",
+                      "origin",
+                      "main"
+                  ],
+                  check=True
+              )
+
+              print("GTA VI state saved.")
+
+          else:
+
+              print("No repository changes.")
+
+          print()
+          print("GTA VI tracker finished.")
           PY
