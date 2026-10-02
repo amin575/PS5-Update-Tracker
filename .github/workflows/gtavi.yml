@@ -1,4 +1,4 @@
-name: GTA VI Utils Inspect
+name: GTA VI Inspect Scripts
 
 on:
   workflow_dispatch:
@@ -8,29 +8,119 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Read Prospero utils.js
+      - name: Inspect Prospero page scripts
         run: |
           python3 - <<'PY'
           import requests
+          from bs4 import BeautifulSoup
+          from urllib.parse import urljoin
 
-          url = "https://prosperopatches.com/assets/js/utils.js?v=1709144554"
-
-          print("Downloading utils.js...")
-          print(url)
-          print()
+          url = "https://prosperopatches.com/PPSA01547"
 
           r = requests.get(
               url,
-              headers={
-                  "User-Agent": "Mozilla/5.0"
-              },
+              headers={"User-Agent": "Mozilla/5.0"},
               timeout=30
           )
 
-          print("HTTP:", r.status_code)
-          print("SIZE:", len(r.text))
+          print("PAGE HTTP:", r.status_code)
+          print("PAGE SIZE:", len(r.text))
           print()
-          print("========== utils.js ==========")
-          print(r.text)
-          print("========== END ==========")
+
+          soup = BeautifulSoup(r.text, "html.parser")
+
+          scripts = []
+
+          for s in soup.find_all("script"):
+              src = s.get("src")
+              if src:
+                  scripts.append(urljoin(url, src))
+
+          print("========== SCRIPT FILES ==========")
+
+          for i, js_url in enumerate(scripts, 1):
+              print(f"{i}. {js_url}")
+
+          print()
+          print("TOTAL SCRIPTS:", len(scripts))
+          print()
+
+          keywords = [
+              "fetch(",
+              "$.ajax",
+              "XMLHttpRequest",
+              "httpPost",
+              "httpGet",
+              "loadpatches",
+              "/api/",
+              "dynpatch",
+              "titleid",
+              "prospero",
+              "patch"
+          ]
+
+          for i, js_url in enumerate(scripts, 1):
+
+              print()
+              print("=" * 80)
+              print(f"SCRIPT {i}: {js_url}")
+              print("=" * 80)
+
+              try:
+                  jr = requests.get(
+                      js_url,
+                      headers={"User-Agent": "Mozilla/5.0"},
+                      timeout=30
+                  )
+
+                  print("HTTP:", jr.status_code)
+                  print("SIZE:", len(jr.text))
+                  print()
+
+                  text = jr.text
+
+                  found = False
+
+                  for keyword in keywords:
+                      pos = 0
+
+                      while True:
+                          pos = text.lower().find(keyword.lower(), pos)
+
+                          if pos == -1:
+                              break
+
+                          found = True
+
+                          start = max(0, pos - 500)
+                          end = min(len(text), pos + 1000)
+
+                          print(f"--- MATCH: {keyword} ---")
+                          print(text[start:end])
+                          print("--- END MATCH ---")
+                          print()
+
+                          pos += len(keyword)
+
+                  if not found:
+                      print("NO RELEVANT MATCHES")
+
+              except Exception as e:
+                  print("ERROR:", e)
+
+          print()
+          print("=" * 80)
+          print("INLINE SCRIPTS")
+          print("=" * 80)
+
+          for i, s in enumerate(soup.find_all("script"), 1):
+              if not s.get("src"):
+                  content = s.get_text(strip=False)
+
+                  if content.strip():
+                      print()
+                      print(f"--- INLINE SCRIPT {i} ---")
+                      print(content)
+                      print(f"--- END INLINE SCRIPT {i} ---")
+
           PY
