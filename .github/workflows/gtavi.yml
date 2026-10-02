@@ -1,4 +1,4 @@
-name: GTA VI Inspect Scripts
+name: GTA VI Find API
 
 on:
   workflow_dispatch:
@@ -8,125 +8,80 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Inspect Prospero scripts
+      - name: Find Prospero API
         run: |
           python3 - <<'PY'
           import requests
           import re
-          from urllib.parse import urljoin
 
-          url = "https://prosperopatches.com/PPSA01547"
-
-          r = requests.get(
-              url,
-              headers={"User-Agent": "Mozilla/5.0"},
-              timeout=30
-          )
-
-          print("PAGE HTTP:", r.status_code)
-          print("PAGE SIZE:", len(r.text))
-          print()
-
-          html = r.text
-
-          scripts = re.findall(
-              r'<script[^>]+src=["\']([^"\']+)["\']',
-              html,
-              re.I
-          )
-
-          scripts = [urljoin(url, x) for x in scripts]
-
-          print("========== SCRIPT FILES ==========")
-
-          for i, js_url in enumerate(scripts, 1):
-              print(f"{i}. {js_url}")
-
-          print()
-          print("TOTAL SCRIPTS:", len(scripts))
+          files = [
+              "https://prosperopatches.com/assets/js/scripts.js?v=1709144554",
+              "https://prosperopatches.com/assets/js/homepage.js?v=1709144554"
+          ]
 
           keywords = [
-              "fetch(",
-              "$.ajax",
-              "XMLHttpRequest",
               "httpPost",
               "httpGet",
               "loadpatches",
               "/api/",
-              "dynpatch",
+              "fetch(",
+              "$.ajax",
+              "ajax(",
               "titleid",
-              "prospero",
+              "dynpatch",
+              "patches",
               "patch"
           ]
 
-          for i, js_url in enumerate(scripts, 1):
+          for url in files:
 
               print()
               print("=" * 80)
-              print(f"SCRIPT {i}: {js_url}")
+              print(url)
               print("=" * 80)
 
-              try:
-                  jr = requests.get(
-                      js_url,
-                      headers={"User-Agent": "Mozilla/5.0"},
-                      timeout=30
-                  )
+              r = requests.get(
+                  url,
+                  headers={"User-Agent": "Mozilla/5.0"},
+                  timeout=30
+              )
 
-                  print("HTTP:", jr.status_code)
-                  print("SIZE:", len(jr.text))
-                  print()
+              print("HTTP:", r.status_code)
+              print("SIZE:", len(r.text))
+              print()
 
-                  js = jr.text
-                  found = False
+              js = r.text
+              found_positions = set()
 
-                  for keyword in keywords:
-                      start_pos = 0
+              for keyword in keywords:
 
-                      while True:
-                          pos = js.lower().find(keyword.lower(), start_pos)
+                  pos = 0
 
-                          if pos == -1:
-                              break
+                  while True:
 
-                          found = True
+                      pos = js.lower().find(keyword.lower(), pos)
 
-                          start = max(0, pos - 700)
-                          end = min(len(js), pos + 1500)
+                      if pos == -1:
+                          break
 
-                          print(f"--- MATCH: {keyword} ---")
-                          print(js[start:end])
-                          print("--- END MATCH ---")
+                      # جلوگیری از چاپ چندباره همان قسمت
+                      block_start = max(0, pos - 600)
+                      block_end = min(len(js), pos + 1200)
+
+                      key = (block_start, block_end)
+
+                      if key not in found_positions:
+
+                          found_positions.add(key)
+
                           print()
+                          print(f"--- MATCH: {keyword} ---")
+                          print(js[block_start:block_end])
+                          print("--- END ---")
 
-                          start_pos = pos + len(keyword)
+                      pos += len(keyword)
 
-                  if not found:
-                      print("NO RELEVANT MATCHES")
-
-              except Exception as e:
-                  print("ERROR:", e)
-
-          print()
-          print("=" * 80)
-          print("INLINE SCRIPTS")
-          print("=" * 80)
-
-          inline = re.findall(
-              r'<script(?![^>]+src=)[^>]*>(.*?)</script>',
-              html,
-              re.I | re.S
-          )
-
-          print("INLINE SCRIPT COUNT:", len(inline))
-
-          for i, content in enumerate(inline, 1):
-
-              if content.strip():
-
-                  print()
-                  print(f"--- INLINE SCRIPT {i} ---")
-                  print(content)
-                  print(f"--- END INLINE SCRIPT {i} ---")
+              if not found_positions:
+                  print("NO MATCHES")
 
           PY
