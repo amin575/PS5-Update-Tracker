@@ -13,223 +13,353 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install Playwright
-        run: |
-          npm init -y
-          npm install playwright
-          npx playwright install --with-deps chromium
-
-      - name: Check GTA VI
+      - name: Check GTA VI update
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
-          cat > check_gta.js <<'NODE'
-          const { chromium } = require("playwright");
-          const fs = require("fs");
+          python - <<'PY'
+          import requests
+          import re
+          import json
+          import os
+          import subprocess
 
-          const TITLE_ID = "PPSA01547";
-          const PAGE_URL = "https://prosperopatches.com/PPSA01547";
-          const STATE_FILE = "gtavi_latest.txt";
+          BASE = "https://prosperopatches.com"
+          TITLE_ID = "PPSA01547"
+          PAGE = f"{BASE}/{TITLE_ID}"
+          API = f"{BASE}/api/internal/loadpatches"
 
-          (async () => {
-            const browser = await chromium.launch({
-              headless: true
-            });
+          STATE_FILE = "gtavi_version.txt"
 
-            const page = await browser.newPage();
+          BOT_TOKEN = os.environ["BOT_TOKEN"]
+          CHAT_ID = os.environ["CHAT_ID"]
 
-            let patchData = null;
+          print("🎮 GTA VI PS5")
+          print("Opening Prospero page...")
+          print(PAGE)
+          print()
 
-            page.on("response", async (response) => {
-              const url = response.url();
+          session = requests.Session()
 
-              if (!url.includes("/api/internal/loadpatches")) {
-                return;
+          session.headers.update({
+              "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0 Safari/537.36"
+          })
+
+          # --------------------------------------------------
+          # 1. Open GTA VI Prospero page
+          # --------------------------------------------------
+
+          page = session.get(
+              PAGE,
+              timeout=30
+          )
+
+          print("Page HTTP:", page.status_code)
+          print("Page size:", len(page.text))
+
+          if page.status_code != 200:
+              print("❌ Failed to open Prospero page")
+              raise SystemExit(1)
+
+          html = page.text
+
+          # --------------------------------------------------
+          # 2. Extract GTA VI's own Prospero key
+          # --------------------------------------------------
+
+          match = re.search(
+              r'data-titleid="([^"]+)"\s+data-key="([0-9a-f]+)"',
+              html,
+              re.IGNORECASE
+          )
+
+          if not match:
+              # Fallback for the alternative markup format
+              packed = re.search(
+                  r'id="dynpatch"[^>]*data-loadparams="\{([^"]+)\}"',
+                  html
+              )
+
+              if packed:
+                  title_match = re.search(
+                      r'["\']titleid["\']\s*:\s*["\']([A-Z0-9]+)["\']',
+                      packed.group(1),
+                      re.IGNORECASE
+                  )
+
+                  key_match = re.search(
+                      r'["\']key["\']\s*:\s*["\']([0-9a-f]+)["\']',
+                      packed.group(1),
+                      re.IGNORECASE
+                  )
+
+                  if title_match and key_match:
+                      titleid = title_match.group(1)
+                      key = key_match.group(1)
+                  else:
+                      titleid = None
+                      key = None
+              else:
+                  titleid = None
+                  key = None
+          else:
+              titleid = match.group(1)
+              key = match.group(2)
+
+          if not titleid or not key:
+              print("❌ GTA VI Prospero key was not found")
+              print("The Prospero page markup may have changed.")
+              raise SystemExit(1)
+
+          print("Title ID:", titleid)
+          print("Prospero key found successfully")
+          print()
+
+          # --------------------------------------------------
+          # 3. Request patch list
+          # --------------------------------------------------
+
+          payload = {
+              "titleid": titleid,
+              "key": key
+          }
+
+          print("Requesting patch list...")
+
+          response = session.post(
+              API,
+              data=json.dumps(payload),
+              timeout=30,
+              headers={
+                  "User-Agent": "Mozilla/5.0",
+                  "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                  "Accept": "application/json",
+                  "Referer": PAGE,
+                  "Origin": BASE,
+                  "X-Requested-With": "XMLHttpRequest"
               }
+          )
 
-              console.log("Found Prospero API request:");
-              console.log(url);
+          print("API HTTP:", response.status_code)
 
-              try {
-                const json = await response.json();
+          if response.status_code != 200:
+              print("❌ Prospero API request failed")
+              print(response.text)
+              raise SystemExit(1)
 
-                console.log("Prospero API response received.");
+          try:
+              data = response.json()
+          except Exception:
+              print("❌ Prospero returned invalid JSON")
+              print(response.text)
+              raise SystemExit(1)
 
-                if (json && json.success && json.patches) {
-                  patchData = json;
-                }
-              } catch (error) {
-                console.log("Could not read API response.");
-              }
-            });
+          if not data.get("success"):
+              print("❌ Prospero API returned failure")
+              print(data)
+              raise SystemExit(1)
 
-            console.log("Opening GTA VI Prospero page...");
+          patches = data.get("patches", [])
 
-            await page.goto(PAGE_URL, {
-              waitUntil: "networkidle",
-              timeout: 60000
-            });
+          if not patches:
+              print("❌ No GTA VI patches found")
+              raise SystemExit(1)
 
-            console.log("Page loaded.");
+          print("Patches found:", len(patches))
+          print()
 
-            await page.waitForTimeout(5000);
+          # --------------------------------------------------
+          # 4. Find latest patch
+          # --------------------------------------------------
 
-            if (!patchData) {
-              console.log("API data was not captured.");
-              await browser.close();
-              process.exit(1);
-            }
+          latest = None
 
-            const patches = patchData.patches;
+          for patch in patches:
+              if patch.get("is_latest"):
+                  latest = patch
+                  break
 
-            if (!patches || patches.length === 0) {
-              console.log("No GTA VI patches found.");
-              await browser.close();
-              process.exit(1);
-            }
+          if latest is None:
+              latest = patches[0]
 
-            const latest = patches[0];
+          version = latest.get("content_ver")
+          size = latest.get("filesize")
+          firmware = latest.get("required_firmware")
+          import_date = latest.get("import_date")
 
-            const version =
-              String(latest.content_ver ?? "Unknown");
+          if not version:
+              print("❌ Could not find GTA VI version")
+              print(latest)
+              raise SystemExit(1)
 
-            const size =
-              String(latest.filesize ?? "Unknown");
+          print("================================")
+          print("GTA VI CURRENT DATA")
+          print("================================")
+          print("Version:", version)
+          print("Size:", size)
+          print("Required firmware:", firmware)
+          print("Import date:", import_date)
+          print("================================")
+          print()
 
-            const firmware =
-              String(latest.required_firmware ?? "Unknown");
+          # --------------------------------------------------
+          # 5. Read previous version
+          # --------------------------------------------------
 
-            const importDate =
-              String(latest.import_date ?? "Unknown");
+          old_version = ""
 
-            console.log("");
-            console.log("===== GTA VI =====");
-            console.log("Version:", version);
-            console.log("Size:", size);
-            console.log("Firmware:", firmware);
-            console.log("Import Date:", importDate);
-            console.log("==================");
-            console.log("");
+          if os.path.exists(STATE_FILE):
+              with open(STATE_FILE, "r") as f:
+                  old_version = f.read().strip()
 
-            const newData =
-              "🎮 GTA VI PS5\n\n" +
-              "Version: " + version + "\n" +
-              "Size: " + size + "\n" +
-              "Firmware: " + firmware + "\n" +
-              "Import Date: " + importDate;
+          print(
+              "Previous version:",
+              old_version if old_version else "None"
+          )
 
-            let oldData = "";
+          # --------------------------------------------------
+          # 6. First run
+          # --------------------------------------------------
 
-            if (fs.existsSync(STATE_FILE)) {
-              oldData = fs.readFileSync(
-                STATE_FILE,
-                "utf8"
-              ).trim();
-            }
+          if not old_version:
 
-            if (!oldData) {
+              print("First run - saving current GTA VI version")
 
-              console.log(
-                "First run - saving current GTA VI data."
-              );
+              with open(STATE_FILE, "w") as f:
+                  f.write(version)
 
-              fs.writeFileSync(
-                STATE_FILE,
-                newData
-              );
+          # --------------------------------------------------
+          # 7. New update detected
+          # --------------------------------------------------
 
-            } else if (oldData !== newData) {
+          elif old_version != version:
 
-              console.log(
-                "NEW GTA VI DATA FOUND!"
-              );
+              print()
+              print("🆕 NEW GTA VI UPDATE DETECTED")
+              print()
 
-              const token = process.env.BOT_TOKEN;
-              const chatId = process.env.CHAT_ID;
+              message = f"""🎮 PS5 UPDATE
 
-              const message =
-                "🎮 GTA VI PS5\n\n" +
-                "🆕 دیتای جدید GTA VI شناسایی شد\n\n" +
-                "Version: " + version + "\n" +
-                "Size: " + size + "\n" +
-                "Firmware: " + firmware + "\n" +
-                "Import Date: " + importDate;
+Grand Theft Auto VI
 
-              const telegramUrl =
-                "https://api.telegram.org/bot" +
-                token +
-                "/sendMessage";
+Version: {version}
+Size: {size or "Unknown"}
+Required firmware: {firmware or "Unknown"}
+Import date: {import_date or "Unknown"}
 
-              const telegramResponse =
-                await fetch(telegramUrl, {
-                  method: "POST",
-                  headers: {
-                    "Content-Type":
-                      "application/json"
+🆕 GTA VI Update جدید شناسایی شد"""
+
+              telegram_url = (
+                  f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+              )
+
+              telegram_response = requests.post(
+                  telegram_url,
+                  data={
+                      "chat_id": CHAT_ID,
+                      "text": message
                   },
-                  body: JSON.stringify({
-                    chat_id: chatId,
-                    text: message
-                  })
-                });
+                  timeout=30
+              )
 
-              console.log(
-                "Telegram HTTP:",
-                telegramResponse.status
-              );
+              print(
+                  "Telegram HTTP:",
+                  telegram_response.status_code
+              )
 
-              if (!telegramResponse.ok) {
-                console.log(
-                  await telegramResponse.text()
-                );
+              if telegram_response.status_code != 200:
+                  print("❌ Telegram notification failed")
+                  print(telegram_response.text)
+                  raise SystemExit(1)
 
-                await browser.close();
-                process.exit(1);
-              }
+              print("✅ Telegram notification sent")
 
-              fs.writeFileSync(
-                STATE_FILE,
-                newData
-              );
+              with open(STATE_FILE, "w") as f:
+                  f.write(version)
 
-              console.log(
-                "Telegram notification sent."
-              );
+          else:
 
-            } else {
+              print("No new GTA VI update")
 
-              console.log(
-                "No GTA VI changes."
-              );
-            }
+          # --------------------------------------------------
+          # 8. Save state to GitHub
+          # --------------------------------------------------
 
-            await browser.close();
-          })();
-          NODE
+          print()
+          print("Updating repository state...")
 
-          node check_gta.js
+          subprocess.run(
+              [
+                  "git",
+                  "config",
+                  "user.name",
+                  "github-actions[bot]"
+              ],
+              check=True
+          )
 
-      - name: Save GTA VI state
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          subprocess.run(
+              [
+                  "git",
+                  "config",
+                  "user.email",
+                  "41898282+github-actions[bot]@users.noreply.github.com"
+              ],
+              check=True
+          )
 
-          git add gtavi_latest.txt
+          subprocess.run(
+              ["git", "add", STATE_FILE],
+              check=True
+          )
 
-          if git diff --cached --quiet; then
-            echo "Nothing to commit."
-          else
-            git commit -m "Update GTA VI data"
-            git push origin main
-          fi
+          result = subprocess.run(
+              ["git", "diff", "--cached", "--quiet"]
+          )
+
+          if result.returncode != 0:
+
+              subprocess.run(
+                  [
+                      "git",
+                      "commit",
+                      "-m",
+                      "Update GTA VI version"
+                  ],
+                  check=True
+              )
+
+              subprocess.run(
+                  [
+                      "git",
+                      "pull",
+                      "--rebase",
+                      "origin",
+                      "main"
+                  ],
+                  check=True
+              )
+
+              subprocess.run(
+                  [
+                      "git",
+                      "push",
+                  ],
+                  check=True
+              )
+
+              print("✅ GTA VI version state saved")
+
+          else:
+
+              print("No repository changes")
+
+          print()
+          print("🎮 GTA VI tracker finished")
+          PY
