@@ -8,15 +8,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check PS5 firmware
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
+      - name: Inspect Sony XML
         run: |
           python - <<'PY'
           import requests
-          import xml.etree.ElementTree as ET
-          import os
 
           url = "http://fus01.ps5.update.playstation.net/update/ps5/official/tJMRE80IbXnE9YuG0jzTXgKEjIMoabr6/list/us/updatelist.xml"
 
@@ -29,54 +24,7 @@ jobs:
 
           r.raise_for_status()
 
-          root = ET.fromstring(r.content)
-
-          systems = root.findall(".//system_pup")
-
-          print("4. Firmware entries:", len(systems))
-
-          if not systems:
-              raise Exception("No system_pup found")
-
-          system = systems[-1]
-
-          version = system.attrib.get("label", "Unknown")
-
-          image = system.find(".//image")
-
-          if image is None:
-              raise Exception("No firmware image found")
-
-          size = int(image.attrib.get("size", "0"))
-          size_gb = size / 1024 / 1024 / 1024
-
-          print("5. Version:", version)
-          print("6. Size:", size_gb, "GB")
-
-          BOT_TOKEN = os.environ["BOT_TOKEN"]
-          CHAT_ID = os.environ["CHAT_ID"]
-
-          message = (
-              "🟦 PS5 SYSTEM SOFTWARE\n\n"
-              "Version: " + version + "\n"
-              "Size: " + f"{size_gb:.2f}" + " GB"
-          )
-
-          print("7. Sending Telegram message...")
-
-          tg = requests.post(
-              "https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage",
-              data={
-                  "chat_id": CHAT_ID,
-                  "text": message
-              },
-              timeout=20
-          )
-
-          print("8. Telegram HTTP:", tg.status_code)
-          print("9. Telegram response:", tg.text)
-
-          tg.raise_for_status()
-
-          print("10. DONE")
+          print("===== SONY XML START =====")
+          print(r.text)
+          print("===== SONY XML END =====")
           PY
