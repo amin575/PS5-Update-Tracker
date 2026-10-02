@@ -1,26 +1,43 @@
-name: Fortnite Update Test
+name: Fortnite Update Tracker
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: write
 
 jobs:
   check:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check Fortnite PS5 update
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check Fortnite update
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
           python - <<'PY'
           import requests
           import re
+          import os
+          import subprocess
 
-          url = "https://framepatch.app/games/fortnite"
+          URL = "https://framepatch.app/games/fortnite"
+          STATE_FILE = "fortnite_version.txt"
+
+          BOT_TOKEN = os.environ["BOT_TOKEN"]
+          CHAT_ID = os.environ["CHAT_ID"]
 
           print("🎮 Fortnite PS5")
-          print("Source:", url)
+          print("Checking:", URL)
           print()
 
-          r = requests.get(url, timeout=30)
+          r = requests.get(URL, timeout=30)
 
           print("HTTP:", r.status_code)
 
@@ -38,18 +55,110 @@ jobs:
 
           if not match:
               print("❌ Could not find Fortnite patch information")
-              print(html[:5000])
               raise SystemExit(1)
 
           version = match.group(1)
           size = match.group(2)
 
+          print("Current version:", version)
+          print("Current size:", size)
           print()
-          print("===== FORTNITE PS5 =====")
-          print("Title ID: PPSA01922")
-          print("Version:", version)
-          print("Size:", size)
-          print("========================")
+
+          old_version = ""
+
+          if os.path.exists(STATE_FILE):
+              with open(STATE_FILE, "r") as f:
+                  old_version = f.read().strip()
+
+          print("Previous version:", old_version if old_version else "None")
+
+          # First run: save version but don't send notification
+          if not old_version:
+              print()
+              print("🆕 First run detected.")
+              print("Saving current version without sending notification.")
+
+              with open(STATE_FILE, "w") as f:
+                  f.write(version)
+
+          # New update detected
+          elif old_version != version:
+              print()
+              print("🚨 NEW FORTNITE UPDATE DETECTED!")
+
+              message = f"""🎮 PS5 UPDATE
+
+Fortnite
+
+Version: {version}
+Size: {size}
+
+🆕 Update جدید شناسایی شد"""
+
+              telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+
+              response = requests.post(
+                  telegram_url,
+                  data={
+                      "chat_id": CHAT_ID,
+                      "text": message
+                  },
+                  timeout=30
+              )
+
+              print("Telegram HTTP:", response.status_code)
+
+              if response.status_code != 200:
+                  print("❌ Telegram notification failed")
+                  print(response.text)
+                  raise SystemExit(1)
+
+              print("✅ Telegram notification sent.")
+
+              with open(STATE_FILE, "w") as f:
+                  f.write(version)
+
+          else:
+              print()
+              print("ℹ️ No new Fortnite update.")
+
+          # Commit changed version file
+          result = subprocess.run(
+              ["git", "status", "--porcelain"],
+              capture_output=True,
+              text=True
+          )
+
+          if result.stdout.strip():
+              subprocess.run(
+                  ["git", "config", "user.name", "github-actions[bot]"],
+                  check=True
+              )
+
+              subprocess.run(
+                  ["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"],
+                  check=True
+              )
+
+              subprocess.run(
+                  ["git", "add", STATE_FILE],
+                  check=True
+              )
+
+              subprocess.run(
+                  ["git", "commit", "-m", "Update Fortnite version"],
+                  check=True
+              )
+
+              subprocess.run(
+                  ["git", "push"],
+                  check=True
+              )
+
+              print("✅ Version state saved to repository.")
+          else:
+              print("ℹ️ No state changes to commit.")
+
           print()
-          print("✅ Fortnite update data found.")
+          print("✅ Fortnite tracker finished.")
           PY
