@@ -26,40 +26,86 @@ jobs:
           python - <<'PY'
           import requests
           import os
+          import re
           import json
           import subprocess
 
           TITLE_ID = "PPSA01547"
-          API_URL = "https://prosperopatches.com/api/internal/loadpatches"
           PAGE_URL = "https://prosperopatches.com/PPSA01547"
+          API_URL = "https://prosperopatches.com/api/internal/loadpatches"
           STATE_FILE = "gtavi_latest.txt"
 
           session = requests.Session()
 
-          headers = {
-              "User-Agent": "Mozilla/5.0",
-              "Accept": "application/json",
+          session.headers.update({
+              "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140 Safari/537.36",
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+          })
+
+          print("Opening GTA VI Prospero page...")
+
+          page = session.get(
+              PAGE_URL,
+              timeout=30
+          )
+
+          print("Page HTTP:", page.status_code)
+
+          if page.status_code != 200:
+              print(page.text[:1000])
+              raise SystemExit(1)
+
+          html = page.text
+
+          print("Page size:", len(html))
+
+          # Find the per-title API key from the page HTML.
+          key = None
+
+          patterns = [
+              r'["\']key["\']\s*:\s*["\']([a-fA-F0-9]{32,})["\']',
+              r'data-key=["\']([^"\']+)["\']',
+              r'data-api-key=["\']([^"\']+)["\']',
+              r'key\s*=\s*["\']([a-fA-F0-9]{32,})["\']'
+          ]
+
+          for pattern in patterns:
+              match = re.search(pattern, html, re.IGNORECASE)
+
+              if match:
+                  key = match.group(1)
+                  print("Found page key.")
+                  break
+
+          if not key:
+              print("ERROR: GTA VI page key was not found.")
+              print("The Prospero page HTML may have changed.")
+              raise SystemExit(1)
+
+          print("Loading GTA VI patches...")
+
+          api_headers = {
+              "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140 Safari/537.36",
+              "Accept": "application/json, text/plain, */*",
               "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
               "Referer": PAGE_URL,
               "Origin": "https://prosperopatches.com",
               "X-Requested-With": "XMLHttpRequest"
           }
 
-          data = {
+          payload = {
               "titleid": TITLE_ID,
-              "key": "db36a93c8bdfcc99c6c0170671c3b49d75a9873eb3c634fde0ab26392353a299"
+              "key": key
           }
-
-          print("Checking GTA VI...")
 
           response = session.post(
               API_URL,
-              headers=headers,
-              data=json.dumps(data),
+              headers=api_headers,
+              data=json.dumps(payload),
               timeout=30
           )
 
-          print("HTTP:", response.status_code)
+          print("API HTTP:", response.status_code)
 
           if response.status_code != 200:
               print(response.text)
@@ -76,7 +122,7 @@ jobs:
           patches = result.get("patches", [])
 
           if not patches:
-              print("No GTA VI data found.")
+              print("No GTA VI patches found.")
               raise SystemExit(1)
 
           latest = patches[0]
@@ -86,10 +132,14 @@ jobs:
           firmware = str(latest.get("required_firmware", "Unknown"))
           import_date = str(latest.get("import_date", "Unknown"))
 
+          print()
+          print("===== GTA VI =====")
           print("Version:", version)
           print("Size:", size)
           print("Firmware:", firmware)
-          print("Import date:", import_date)
+          print("Import Date:", import_date)
+          print("==================")
+          print()
 
           new_data = (
               "🎮 GTA VI PS5\n\n"
@@ -107,7 +157,8 @@ jobs:
 
           if not old_data:
 
-              print("First run. Saving current GTA VI data.")
+              print("First run.")
+              print("Saving current GTA VI data without notification.")
 
               with open(STATE_FILE, "w") as f:
                   f.write(new_data)
@@ -143,7 +194,7 @@ jobs:
                   timeout=30
               )
 
-              print("Telegram:", telegram.status_code)
+              print("Telegram HTTP:", telegram.status_code)
 
               if telegram.status_code != 200:
                   print(telegram.text)
@@ -152,9 +203,11 @@ jobs:
               with open(STATE_FILE, "w") as f:
                   f.write(new_data)
 
+              print("Telegram notification sent.")
+
           else:
 
-              print("No changes.")
+              print("No GTA VI changes.")
 
           subprocess.run(
               ["git", "config", "user.name", "github-actions[bot]"],
@@ -192,7 +245,7 @@ jobs:
                   check=True
               )
 
-              print("GTA VI data saved.")
+              print("GTA VI state saved.")
 
           else:
 
