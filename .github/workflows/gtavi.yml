@@ -1,4 +1,4 @@
-name: GTA VI Test
+name: GTA VI Key Test
 
 on:
   workflow_dispatch:
@@ -8,26 +8,83 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Test Prospero
+      - name: Extract Prospero data
         run: |
           python - <<'PY'
           import requests
+          import re
 
           url = "https://prosperopatches.com/PPSA01547"
-
-          print("Opening GTA VI Prospero page...")
-          print(url)
 
           r = requests.get(
               url,
               headers={
                   "User-Agent": "Mozilla/5.0"
               },
-              timeout=20
+              timeout=30
           )
 
           print("HTTP:", r.status_code)
           print("SIZE:", len(r.text))
           print()
-          print(r.text[:2000])
+
+          html = r.text
+
+          # Search for anything containing loadpatches
+          print("===== LOADPATCHES =====")
+
+          matches = re.findall(
+              r'.{0,300}loadpatches.{0,500}',
+              html,
+              re.IGNORECASE
+          )
+
+          if matches:
+              for x in matches:
+                  print(x)
+                  print()
+          else:
+              print("No loadpatches found")
+
+          # Search for anything containing data-key
+          print("===== DATA-KEY =====")
+
+          matches = re.findall(
+              r'.{0,300}data-key.{0,500}',
+              html,
+              re.IGNORECASE
+          )
+
+          if matches:
+              for x in matches:
+                  print(x)
+                  print()
+          else:
+              print("No data-key found")
+
+          # Search for key= style values
+          print("===== KEY REFERENCES =====")
+
+          matches = re.findall(
+              r'.{0,200}(?:key|KEY).{0,400}',
+              html
+          )
+
+          count = 0
+
+          for x in matches:
+              print(x)
+              print()
+
+              count += 1
+
+              if count >= 30:
+                  break
+
+          # Save complete HTML for inspection
+          with open("prospero.html", "w", encoding="utf-8") as f:
+              f.write(html)
+
+          print()
+          print("Complete HTML saved.")
           PY
