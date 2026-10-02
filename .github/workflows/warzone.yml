@@ -8,21 +8,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Find Prospero API
+      - name: Find Prospero API request
         run: |
           python - <<'PY'
           import requests
           import re
-          from urllib.parse import urljoin
 
-          url = "https://prosperopatches.com/PPSA01649"
+          js_url = "https://prosperopatches.com/assets/js/titleview.js?v=1709144554"
 
           print("🎮 Warzone PS5")
-          print("Page:", url)
+          print("Downloading titleview.js...")
           print()
 
           r = requests.get(
-              url,
+              js_url,
               timeout=30,
               headers={
                   "User-Agent": "Mozilla/5.0"
@@ -30,78 +29,74 @@ jobs:
           )
 
           print("HTTP:", r.status_code)
-          print("HTML size:", len(r.text))
+          print("JS size:", len(r.text))
           print()
 
-          html = r.text
+          if r.status_code != 200:
+              print("❌ Could not download titleview.js")
+              raise SystemExit(1)
 
-          print("===== SCRIPT FILES =====")
+          js = r.text
 
-          scripts = re.findall(
-              r'<script[^>]+src=["\']([^"\']+)["\']',
-              html,
-              re.IGNORECASE
-          )
-
-          if not scripts:
-              print("No external JavaScript files found.")
-          else:
-              for src in scripts:
-                  full_url = urljoin(url, src)
-                  print(full_url)
-
-          print()
-          print("===== API / JSON REFERENCES =====")
+          print("===== API REFERENCES =====")
 
           patterns = [
-              r'https?://[^"\']+',
-              r'["\']([^"\']*(?:api|json|patch|update)[^"\']*)["\']'
+              r'/api/internal[^"\']*',
+              r'apiUri[^;]*',
+              r'\.ajax\([^)]*\)',
+              r'\$\.get\([^)]*\)',
+              r'\$\.post\([^)]*\)',
+              r'fetch\([^)]*\)',
+              r'axios[^;]*'
           ]
 
-          found = set()
+          found = False
 
           for pattern in patterns:
               matches = re.findall(
                   pattern,
-                  html,
-                  re.IGNORECASE
+                  js,
+                  re.IGNORECASE | re.DOTALL
               )
 
-              for item in matches:
-                  if isinstance(item, tuple):
-                      item = item[0]
+              if matches:
+                  print()
+                  print("PATTERN:", pattern)
 
-                  if any(x in item.lower() for x in [
-                      "api",
-                      "json",
-                      "patch",
-                      "update"
-                  ]):
-                      found.add(item)
+                  for match in matches[:20]:
+                      print(match[:2000])
 
-          if found:
-              for item in sorted(found):
-                  print(item)
-          else:
-              print("No obvious API references found.")
+                  found = True
 
           print()
-          print("===== IMPORTANT PAGE TEXT =====")
+          print("===== SEARCH AROUND 'patch' =====")
 
           for keyword in [
-              "Loading patches",
-              "fetch(",
-              "axios",
-              "/api/",
-              ".json",
-              "patches"
+              "patch",
+              "title",
+              "apiUri",
+              "lastupdated",
+              "patch-container"
           ]:
-              pos = html.lower().find(keyword.lower())
+              positions = [
+                  m.start()
+                  for m in re.finditer(
+                      re.escape(keyword),
+                      js,
+                      re.IGNORECASE
+                  )
+              ]
 
-              if pos != -1:
+              if positions:
                   print()
-                  print("Keyword:", keyword)
-                  print(html[max(0, pos - 500):pos + 1500])
+                  print("KEYWORD:", keyword)
+
+                  for pos in positions[:5]:
+                      print(js[max(0, pos - 500):pos + 1500])
+
+          if not found:
+              print()
+              print("❌ No API request pattern found.")
 
           print()
           print("===== TEST FINISHED =====")
