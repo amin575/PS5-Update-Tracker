@@ -8,17 +8,35 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Test Sony server
+      - name: Check PS5 firmware
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
           python - <<'PY'
           import requests
+          import xml.etree.ElementTree as ET
+          import os
+
+          BOT_TOKEN = os.environ["BOT_TOKEN"]
+          CHAT_ID = os.environ["CHAT_ID"]
 
           url = "http://fus01.ps5.update.playstation.net/update/ps5/official/tJMRE80IbXnE9YuG0jzTXgKEjIMoabr6/list/us/updatelist.xml"
 
           r = requests.get(url, timeout=20)
+          r.raise_for_status()
 
-          print("HTTP STATUS:", r.status_code)
-          print("CONTENT LENGTH:", len(r.content))
-          print("FIRST 500 CHARACTERS:")
-          print(r.text[:500])
+          root = ET.fromstring(r.text)
+
+          print("Sony XML received successfully")
+          print("XML size:", len(r.content))
+
+          requests.post(
+              f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+              data={
+                  "chat_id": CHAT_ID,
+                  "text": "✅ Sony PS5 update server connected successfully!"
+              },
+              timeout=20
+          )
           PY
