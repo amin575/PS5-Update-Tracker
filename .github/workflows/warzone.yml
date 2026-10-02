@@ -8,43 +8,50 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Test Prospero loadpatches API
+      - name: Extract loadpatches request
         run: |
           python - <<'PY'
           import requests
-          import json
+          import re
 
-          API = "https://prosperopatches.com/api/internal/loadpatches"
+          js_url = "https://prosperopatches.com/assets/js/titleview.js?v=1709144554"
 
-          data = {
-              "titleid": "PPSA07950",
-              "key": "db36a93c8bdfcc99c6c0170671c3b49d75a9873eb3c634fde0ab26392353a299"
-          }
-
-          print("🎮 Warzone PS5")
-          print("Testing Prospero API...")
-          print()
-          print("API:", API)
-          print("Title ID:", data["titleid"])
-          print()
-
-          r = requests.post(
-              API,
-              data=data,
+          r = requests.get(
+              js_url,
               timeout=30,
-              headers={
-                  "User-Agent": "Mozilla/5.0",
-                  "X-Requested-With": "XMLHttpRequest",
-                  "Referer": "https://prosperopatches.com/PPSA07950"
-              }
+              headers={"User-Agent": "Mozilla/5.0"}
           )
 
+          print("🎮 Warzone PS5")
           print("HTTP:", r.status_code)
-          print("Response size:", len(r.text))
+          print("JS size:", len(r.text))
           print()
 
-          print("===== API RESPONSE =====")
-          print(r.text)
+          js = r.text
+
+          print("===== LOADPATCHES CODE =====")
+
+          positions = [
+              m.start()
+              for m in re.finditer(
+                  r'/loadpatches',
+                  js,
+                  re.IGNORECASE
+              )
+          ]
+
+          print("Found:", len(positions))
           print()
-          print("===== TEST FINISHED =====")
+
+          for i, pos in enumerate(positions):
+              print("----- MATCH", i + 1, "-----")
+              print(
+                  js[
+                      max(0, pos - 2500):
+                      min(len(js), pos + 3000)
+                  ]
+              )
+              print()
+
+          print("===== DONE =====")
           PY
