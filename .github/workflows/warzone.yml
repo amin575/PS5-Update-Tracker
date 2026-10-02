@@ -8,50 +8,63 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Extract loadpatches request
+      - name: Find httpPost function
         run: |
           python - <<'PY'
           import requests
           import re
 
-          js_url = "https://prosperopatches.com/assets/js/titleview.js?v=1709144554"
-
-          r = requests.get(
-              js_url,
-              timeout=30,
-              headers={"User-Agent": "Mozilla/5.0"}
-          )
-
-          print("🎮 Warzone PS5")
-          print("HTTP:", r.status_code)
-          print("JS size:", len(r.text))
-          print()
-
-          js = r.text
-
-          print("===== LOADPATCHES CODE =====")
-
-          positions = [
-              m.start()
-              for m in re.finditer(
-                  r'/loadpatches',
-                  js,
-                  re.IGNORECASE
-              )
+          urls = [
+              "https://prosperopatches.com/assets/js/utils.js?v=1709144554",
+              "https://prosperopatches.com/assets/js/global.js?v=1709144554",
+              "https://prosperopatches.com/assets/js/scripts.js?v=1709144554"
           ]
 
-          print("Found:", len(positions))
-          print()
+          for url in urls:
 
-          for i, pos in enumerate(positions):
-              print("----- MATCH", i + 1, "-----")
-              print(
-                  js[
-                      max(0, pos - 2500):
-                      min(len(js), pos + 3000)
-                  ]
+              print()
+              print("=" * 70)
+              print("FILE:", url)
+              print("=" * 70)
+
+              r = requests.get(
+                  url,
+                  timeout=30,
+                  headers={"User-Agent": "Mozilla/5.0"}
               )
+
+              print("HTTP:", r.status_code)
+              print("SIZE:", len(r.text))
               print()
 
+              if r.status_code != 200:
+                  continue
+
+              js = r.text
+
+              positions = [
+                  m.start()
+                  for m in re.finditer(
+                      r'httpPost',
+                      js,
+                      re.IGNORECASE
+                  )
+              ]
+
+              print("httpPost matches:", len(positions))
+
+              for i, pos in enumerate(positions[:10]):
+
+                  print()
+                  print("----- MATCH", i + 1, "-----")
+
+                  print(
+                      js[
+                          max(0, pos - 1000):
+                          min(len(js), pos + 3000)
+                      ]
+                  )
+
+          print()
           print("===== DONE =====")
           PY
