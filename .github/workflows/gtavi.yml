@@ -1,197 +1,80 @@
-name: GTA VI Update Tracker
+name: GTA VI Find Page Data
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "*/30 * * * *"
 
 jobs:
-  check:
+  inspect:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install Playwright
+      - name: Find GTA VI data
         run: |
-          python3 -m pip install playwright
-          python3 -m playwright install chromium --with-deps
-
-      - name: Check GTA VI
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
-        run: |
-          cat > gtavi.py <<'PY'
-          import asyncio
-          import json
-          import os
-          import hashlib
+          python3 - <<'PY'
           import requests
-          from playwright.async_api import async_playwright
+          import re
 
-          TITLE_ID = "PPSA01547"
-          URL = f"https://prosperopatches.com/{TITLE_ID}"
+          url = "https://prosperopatches.com/PPSA01547"
 
-          async def main():
+          r = requests.get(
+              url,
+              headers={"User-Agent": "Mozilla/5.0"},
+              timeout=30
+          )
 
-              captured = []
+          text = r.text
 
-              async with async_playwright() as p:
-                  browser = await p.chromium.launch(
-                      headless=True,
-                      args=["--no-sandbox"]
-                  )
+          # Remove HTML tags only for easier inspection
+          clean = re.sub(r'<[^>]+>', ' ', text)
+          clean = re.sub(r'\s+', ' ', clean)
 
-                  page = await browser.new_page()
+          print("HTTP:", r.status_code)
+          print("SIZE:", len(text))
+          print()
 
-                  async def handle_response(response):
-                      try:
-                          if "/api/internal/" in response.url:
-                              print("API:", response.request.method, response.url)
+          keywords = [
+              "Grand Theft Auto",
+              "GTA",
+              "PPSA01547",
+              "EP1004",
+              "PPSA",
+              "key",
+              "patch",
+              "title"
+          ]
 
-                              body = await response.text()
+          for keyword in keywords:
+              print("=" * 80)
+              print("KEYWORD:", keyword)
 
-                              print("RESPONSE:")
-                              print(body[:10000])
+              matches = list(re.finditer(
+                  re.escape(keyword),
+                  text,
+                  re.I
+              ))
 
-                              captured.append({
-                                  "url": response.url,
-                                  "method": response.request.method,
-                                  "body": body
-                              })
+              print("MATCHES:", len(matches))
 
-                      except Exception as e:
-                          print("Intercept error:", e)
-
-                  page.on("response", handle_response)
-
-                  print("Opening:", URL)
-
-                  await page.goto(
-                      URL,
-                      wait_until="networkidle",
-                      timeout=120000
-                  )
-
-                  await page.wait_for_timeout(10000)
+              for m in matches[:10]:
+                  start = max(0, m.start() - 1000)
+                  end = min(len(text), m.end() + 2000)
 
                   print()
-                  print("=" * 80)
-                  print("CAPTURED API REQUESTS:", len(captured))
-                  print("=" * 80)
+                  print(text[start:end])
 
-                  await browser.close()
+          print()
+          print("=" * 80)
+          print("LINKS")
+          print("=" * 80)
 
-              if not captured:
-                  print("ERROR: No internal API request was captured.")
-                  raise SystemExit(1)
+          links = re.findall(
+              r'href=["\']([^"\']+)["\']',
+              text,
+              re.I
+          )
 
-              # Find the patch response
-              patch_data = None
+          for link in links:
+              if "PPSA" in link or "patch" in link.lower() or "title" in link.lower():
+                  print(link)
 
-              for item in captured:
-                  if "loadpatches" in item["url"].lower():
-                      try:
-                          data = json.loads(item["body"])
-
-                          if isinstance(data, dict):
-                              patch_data = data
-                              break
-
-                      except Exception:
-                          pass
-
-              if patch_data is None:
-                  print("ERROR: loadpatches response was not found.")
-                  raise SystemExit(1)
-
-              print()
-              print("=" * 80)
-              print("PATCH DATA")
-              print("=" * 80)
-              print(json.dumps(patch_data, indent=2))
-
-              # Save raw response
-              with open("gtavi_data.json", "w", encoding="utf-8") as f:
-                  json.dump(
-                      patch_data,
-                      f,
-                      ensure_ascii=False,
-                      indent=2
-                  )
-
-              # Create a stable fingerprint
-              fingerprint = hashlib.sha256(
-                  json.dumps(
-                      patch_data,
-                      sort_keys=True,
-                      ensure_ascii=False
-                  ).encode()
-              ).hexdigest()
-
-              old_fingerprint = ""
-
-              if os.path.exists("gtavi_previous.txt"):
-                  with open("gtavi_previous.txt", "r") as f:
-                      old_fingerprint = f.read().strip()
-
-              print()
-              print("OLD:", old_fingerprint)
-              print("NEW:", fingerprint)
-
-              # First run: save only
-              if not old_fingerprint:
-                  with open("gtavi_previous.txt", "w") as f:
-                      f.write(fingerprint)
-
-                  print("First run. Baseline saved.")
-                  return
-
-              # Nothing changed
-              if old_fingerprint == fingerprint:
-                  print("No GTA VI update.")
-                  return
-
-              print("NEW GTA VI DATA DETECTED!")
-
-              with open("gtavi_previous.txt", "w") as f:
-                  f.write(fingerprint)
-
-              # Telegram notification
-              token = os.environ.get("BOT_TOKEN")
-              chat_id = os.environ.get("CHAT_ID")
-
-              if not token or not chat_id:
-                  print("Telegram secrets are not configured.")
-                  return
-
-              message = (
-                  "🚨 GTA VI PS5 UPDATE\n\n"
-                  "Title ID: PPSA01547\n"
-                  "New data detected on ProsperoPatches.\n\n"
-                  "Check the latest package/update information."
-              )
-
-              response = requests.post(
-                  f"https://api.telegram.org/bot{token}/sendMessage",
-                  json={
-                      "chat_id": chat_id,
-                      "text": message
-                  },
-                  timeout=30
-              )
-
-              print("Telegram:", response.status_code)
-              print(response.text)
-
-          asyncio.run(main())
           PY
-
-          python3 gtavi.py
-
-      - name: Save GTA VI state
-        if: success()
-        run: |
-          if [ -f gtavi_previous.txt ]; then
-            echo "GTA VI state:"
-            cat gtavi_previous.txt
-          fi
