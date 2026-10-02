@@ -8,59 +8,57 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check Warzone update
+      - name: Find Warzone PS5 data
         run: |
           python - <<'PY'
           import requests
           import re
 
-          urls = [
-              "https://framepatch.app/games/call-of-duty-warzone",
-              "https://framepatch.app/games/warzone",
-              "https://framepatch.app/games/call-of-duty-modern-warfare-iii"
+          url = "https://www.prosperopatches.com/"
+
+          print("🎮 Warzone PS5")
+          print("Checking ProsperoPatches...")
+          print()
+
+          r = requests.get(url, timeout=30)
+
+          print("HTTP:", r.status_code)
+
+          if r.status_code != 200:
+              print("❌ Could not access ProsperoPatches")
+              raise SystemExit(1)
+
+          html = r.text
+
+          print("Page size:", len(html))
+          print()
+
+          # Look for Warzone references
+          patterns = [
+              r'Warzone',
+              r'PPSA[0-9]+',
+              r'PPSA-[0-9]+'
           ]
 
           found = False
 
-          for url in urls:
-              print("Trying:", url)
+          for pattern in patterns:
+              matches = re.findall(
+                  pattern,
+                  html,
+                  re.IGNORECASE
+              )
 
-              try:
-                  r = requests.get(url, timeout=30)
-
-                  print("HTTP:", r.status_code)
-
-                  if r.status_code != 200:
-                      continue
-
-                  html = r.text
-
-                  matches = re.findall(
-                      r'Patch\s+([0-9.]+)\s*[·•]\s*([0-9.]+\s*(?:GB|MB))',
-                      html,
-                      re.IGNORECASE
-                  )
-
-                  if matches:
-                      print()
-                      print("===== WARZONE / COD =====")
-
-                      for version, size in matches[:10]:
-                          print("Version:", version)
-                          print("Size:", size)
-
-                      print("=========================")
-
-                      found = True
-                      break
-
-              except Exception as e:
-                  print("Error:", e)
+              if matches:
+                  print("Found:", pattern)
+                  print(matches[:20])
+                  found = True
 
           if not found:
+              print("❌ Warzone data was not present in the initial page.")
               print()
-              print("❌ No suitable Warzone page/data found.")
-              print("This was only a test and did not modify the Fortnite tracker.")
+              print("ProsperoPatches uses dynamic database loading.")
+              print("The direct page did not expose the game data.")
 
           print()
           print("Test finished.")
