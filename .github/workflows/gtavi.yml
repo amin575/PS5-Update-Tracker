@@ -15,6 +15,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Check GTA VI
         env:
@@ -26,7 +28,6 @@ jobs:
           import re
           import json
           import os
-          import subprocess
 
           TITLE_ID = "PPSA01547"
           BASE = "https://prosperopatches.com"
@@ -60,7 +61,7 @@ jobs:
           html = r.text
 
           # --------------------------------------------------
-          # NO GTA VI DATA YET
+          # CHECK FOR GTA VI DATA
           # --------------------------------------------------
 
           if "dynpatch" not in html.lower():
@@ -80,13 +81,18 @@ jobs:
           Status: هنوز اطلاعاتی در Prospero ثبت نشده.
           Tracker: Active"""
 
-              # فقط اگر فایل هنوز وجود نداشته باشد،
-              # وضعیت اولیه را ثبت و یک نوتیف ارسال کن.
+              # اگر فایل وجود ندارد، آن را بساز.
               if not previous:
 
                   print()
                   print("Creating initial GTA VI state...")
 
+                  with open(STATE_FILE, "w", encoding="utf-8") as f:
+                      f.write(initial_state + "\n")
+
+                  print("Initial state file created.")
+
+                  # فقط اولین بار نوتیف ارسال شود.
                   message = """🎮 PS5 UPDATE
 
           GTA VI
@@ -111,18 +117,23 @@ jobs:
                   if response.status_code != 200:
                       print("Telegram notification failed")
                       print(response.text)
+
+                      # اگر تلگرام شکست خورد، فایل اولیه را حذف کن
+                      # تا اجرای بعدی دوباره بتواند نوتیف بفرستد.
+                      if os.path.exists(STATE_FILE):
+                          os.remove(STATE_FILE)
+
                       raise SystemExit(1)
 
-                  print("Initial Telegram notification sent")
-
-                  with open(STATE_FILE, "w", encoding="utf-8") as f:
-                      f.write(initial_state + "\n")
+                  print("Initial Telegram notification sent.")
 
               else:
                   print()
                   print("Initial GTA VI state already exists.")
                   print("No repeated notification.")
 
+              # اینجا فقط Python تمام می‌شود.
+              # مرحله Save GTA VI state در ادامه اجرا خواهد شد.
               raise SystemExit(0)
 
           # --------------------------------------------------
@@ -376,65 +387,43 @@ jobs:
               print(response.text)
               raise SystemExit(1)
 
-          print("Telegram notification sent")
+          print("Telegram notification sent.")
 
           # فقط بعد از موفقیت تلگرام، وضعیت جدید ذخیره می‌شود.
           with open(STATE_FILE, "w", encoding="utf-8") as f:
               f.write(current + "\n")
 
-          # --------------------------------------------------
-          # SAVE TO GITHUB
-          # --------------------------------------------------
+          print("GTA VI state file updated.")
 
-          print()
-          print("Updating repository state...")
-
-          subprocess.run(
-              ["git", "config", "user.name", "github-actions[bot]"],
-              check=True
-          )
-
-          subprocess.run(
-              [
-                  "git",
-                  "config",
-                  "user.email",
-                  "41898282+github-actions[bot]@users.noreply.github.com"
-              ],
-              check=True
-          )
-
-          subprocess.run(
-              ["git", "add", STATE_FILE],
-              check=True
-          )
-
-          result = subprocess.run(
-              ["git", "diff", "--cached", "--quiet"]
-          )
-
-          if result.returncode != 0:
-
-              subprocess.run(
-                  ["git", "commit", "-m", "Update GTA VI tracker"],
-                  check=True
-              )
-
-              subprocess.run(
-                  ["git", "pull", "--rebase", "origin", "main"],
-                  check=True
-              )
-
-              subprocess.run(
-                  ["git", "push", "origin", "main"],
-                  check=True
-              )
-
-              print("GTA VI state saved successfully")
-
-          else:
-              print("No repository changes")
-
-          print()
-          print("GTA VI tracker finished")
           PY
+
+      - name: Save GTA VI state
+        run: |
+          if [ -f gtavi_latest.txt ]; then
+
+            echo "GTA VI state file found:"
+            echo "----------------------------------------"
+            cat gtavi_latest.txt
+            echo "----------------------------------------"
+
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+            git add gtavi_latest.txt
+
+            if git diff --cached --quiet; then
+              echo "No state change."
+            else
+              git commit -m "Update GTA VI tracker"
+
+              git pull --rebase origin main
+
+              git push origin main
+
+              echo "GTA VI state saved successfully."
+            fi
+
+          else
+            echo "gtavi_latest.txt does not exist."
+            echo "Nothing to save."
+          fi
