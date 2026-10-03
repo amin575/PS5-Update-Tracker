@@ -22,77 +22,171 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
+
         run: |
           python - <<'PY'
           import requests
           import re
           import os
           import subprocess
+          from datetime import datetime, timezone
 
-          URL = "https://framepatch.app/games/fortnite"
+          # ---------------------------------------------------------
+          # Fortnite public build information
+          # ---------------------------------------------------------
+
+          BUILD_URL = (
+              "https://raw.githubusercontent.com/"
+              "Fortnite-Datamining/Fortnite-Datamining/"
+              "main/data/meta/build_info.json"
+          )
+
           STATE_FILE = "fortnite_version.txt"
+          LATEST_FILE = "fortnite_latest.txt"
 
           BOT_TOKEN = os.environ["BOT_TOKEN"]
           CHAT_ID = os.environ["CHAT_ID"]
 
-          print("Fortnite PS5")
-          print("Checking:", URL)
+          print("🎮 Fortnite PS5")
+          print("Checking official/public Fortnite build data...")
 
-          r = requests.get(URL, timeout=30)
+          response = requests.get(BUILD_URL, timeout=30)
 
-          print("HTTP:", r.status_code)
+          print("HTTP:", response.status_code)
 
-          if r.status_code != 200:
-              print("Failed to fetch Fortnite page")
+          if response.status_code != 200:
+              print("Failed to fetch Fortnite build information")
               raise SystemExit(1)
 
-          html = r.text
+          data = response.json()
+
+          build = str(data.get("build", "")).strip()
+
+          if not build:
+              print("Fortnite build was not found")
+              raise SystemExit(1)
+
+          print("Build:", build)
+
+          # ---------------------------------------------------------
+          # Extract Fortnite game version
+          # Example:
+          # ++Fortnite+Release-42.20-CL-58011042
+          # ---------------------------------------------------------
 
           match = re.search(
-              r"Patch\s+([0-9.]+)\s*[·•]\s*([0-9.]+\s*(?:GB|MB))",
-              html,
-              re.IGNORECASE
+              r"Release-([0-9]+(?:\.[0-9]+)+)",
+              build
           )
 
           if not match:
-              print("Could not find Fortnite patch information")
+              print("Could not extract Fortnite version")
               raise SystemExit(1)
 
-          version = match.group(1)
-          size = match.group(2)
+          game_version = match.group(1)
 
-          print("Current version:", version)
-          print("Current size:", size)
+          print("Fortnite game version:", game_version)
 
-          old_version = ""
+          # ---------------------------------------------------------
+          # PS5 version
+          #
+          # We do NOT try to calculate/download size from the build.
+          # That was the source of the previous wrong 74-78 GB values.
+          #
+          # If a reliable PS5 package version is not available from
+          # the source, keep it unknown instead of inventing a value.
+          # ---------------------------------------------------------
+
+          ps5_version = "نامشخص"
+
+          # Known mapping for the currently detected 42.20 release.
+          # This can be extended when reliable PS5 package information
+          # becomes available for future releases.
+          known_ps5_versions = {
+              "42.20": "01.000.232"
+          }
+
+          if game_version in known_ps5_versions:
+              ps5_version = known_ps5_versions[game_version]
+
+          print("PS5 package version:", ps5_version)
+
+          # ---------------------------------------------------------
+          # Update size
+          #
+          # IMPORTANT:
+          # We intentionally DO NOT use FramePatch/Build size here.
+          # Therefore no false 74/78 GB values.
+          # ---------------------------------------------------------
+
+          size = "نامشخص"
+
+          # ---------------------------------------------------------
+          # State
+          #
+          # State includes both game version and PS5 version.
+          # ---------------------------------------------------------
+
+          state = f"{game_version}|{ps5_version}"
+
+          old_state = ""
 
           if os.path.exists(STATE_FILE):
-              with open(STATE_FILE, "r") as f:
-                  old_version = f.read().strip()
+              with open(STATE_FILE, "r", encoding="utf-8") as f:
+                  old_state = f.read().strip()
 
-          print("Previous version:", old_version if old_version else "None")
+          print(
+              "Previous state:",
+              old_state if old_state else "None"
+          )
 
-          if not old_version:
-              print("First run - saving version")
+          # ---------------------------------------------------------
+          # Latest information file
+          #
+          # This is what the Cloudflare Worker reads for /updates.
+          # ---------------------------------------------------------
 
-              with open(STATE_FILE, "w") as f:
-                  f.write(version)
+          latest_text = f"""Version: {ps5_version}
+Fortnite Version: {game_version}
+Size: {size}
+"""
 
-          elif old_version != version:
-              print("NEW FORTNITE UPDATE DETECTED")
+          with open(LATEST_FILE, "w", encoding="utf-8") as f:
+              f.write(latest_text)
+
+          # ---------------------------------------------------------
+          # First run
+          # ---------------------------------------------------------
+
+          if not old_state:
+              print("First run - saving Fortnite version")
+
+              with open(STATE_FILE, "w", encoding="utf-8") as f:
+                  f.write(state)
+
+          # ---------------------------------------------------------
+          # New update
+          # ---------------------------------------------------------
+
+          elif old_state != state:
+              print("🆕 NEW FORTNITE UPDATE DETECTED")
 
               message = f"""🎮 PS5 UPDATE
 
-          Fortnite
+Fortnite
 
-          Version: {version}
-          Size: {size}
+PS5 Version: {ps5_version}
+Fortnite Version: {game_version}
+Size: {size}
 
-          🆕 Update جدید شناسایی شد"""
+🆕 Update جدید شناسایی شد"""
 
-              telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+              telegram_url = (
+                  f"https://api.telegram.org/"
+                  f"bot{BOT_TOKEN}/sendMessage"
+              )
 
-              response = requests.post(
+              telegram_response = requests.post(
                   telegram_url,
                   data={
                       "chat_id": CHAT_ID,
@@ -101,25 +195,40 @@ jobs:
                   timeout=30
               )
 
-              print("Telegram HTTP:", response.status_code)
+              print(
+                  "Telegram HTTP:",
+                  telegram_response.status_code
+              )
 
-              if response.status_code != 200:
+              if telegram_response.status_code != 200:
                   print("Telegram notification failed")
-                  print(response.text)
+                  print(telegram_response.text)
+
+                  # Do NOT save the new state.
+                  # This allows the next scheduled run to retry.
                   raise SystemExit(1)
 
               print("Telegram notification sent")
 
-              with open(STATE_FILE, "w") as f:
-                  f.write(version)
+              with open(STATE_FILE, "w", encoding="utf-8") as f:
+                  f.write(state)
 
           else:
               print("No new Fortnite update")
 
+          # ---------------------------------------------------------
+          # Save files to GitHub
+          # ---------------------------------------------------------
+
           print("Updating repository state...")
 
           subprocess.run(
-              ["git", "config", "user.name", "github-actions[bot]"],
+              [
+                  "git",
+                  "config",
+                  "user.name",
+                  "github-actions[bot]"
+              ],
               check=True
           )
 
@@ -134,7 +243,12 @@ jobs:
           )
 
           subprocess.run(
-              ["git", "add", STATE_FILE],
+              [
+                  "git",
+                  "add",
+                  STATE_FILE,
+                  LATEST_FILE
+              ],
               check=True
           )
 
@@ -143,22 +257,39 @@ jobs:
           )
 
           if result.returncode != 0:
+
               subprocess.run(
-                  ["git", "commit", "-m", "Update Fortnite version"],
+                  [
+                      "git",
+                      "commit",
+                      "-m",
+                      "Update Fortnite tracker"
+                  ],
                   check=True
               )
 
               subprocess.run(
-                  ["git", "pull", "--rebase", "origin", "main"],
+                  [
+                      "git",
+                      "pull",
+                      "--rebase",
+                      "origin",
+                      "main"
+                  ],
                   check=True
               )
 
               subprocess.run(
-                  ["git", "push", "origin", "main"],
+                  [
+                      "git",
+                      "push",
+                      "origin",
+                      "main"
+                  ],
                   check=True
               )
 
-              print("Version state saved successfully")
+              print("Fortnite tracker state saved successfully")
 
           else:
               print("No repository changes")
