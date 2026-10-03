@@ -10,19 +10,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check GTA VI on Prospero
+      - name: Find GTA VI on Prospero
         run: |
           python3 - <<'PY'
           import requests
-          import re
           import json
           from urllib.parse import quote
-
-          TITLE_ID = "PPSA01547"
-          SEARCH_URL = (
-              "https://prosperopatches.com/api/internal/search?term="
-              + quote(TITLE_ID)
-          )
 
           headers = {
               "User-Agent": "Mozilla/5.0",
@@ -30,146 +23,69 @@ jobs:
               "Referer": "https://prosperopatches.com/"
           }
 
-          print("========================================")
-          print("GTA VI PS5 TRACKER")
-          print("Title ID:", TITLE_ID)
-          print("========================================")
-          print()
-
-          r = requests.get(
-              SEARCH_URL,
-              headers=headers,
-              timeout=30
-          )
-
-          print("Search HTTP:", r.status_code)
-          print("Search URL:", SEARCH_URL)
-          print()
-
-          if not r.ok:
-              print("ERROR: Prospero search failed.")
-              print(r.text[:5000])
-              raise SystemExit(1)
-
-          text = r.text
-
-          print("RAW SEARCH RESPONSE:")
-          print(text[:10000])
-          print()
-
-          # ----------------------------------------
-          # Try JSON first
-          # ----------------------------------------
-
-          try:
-              data = r.json()
-
-              print("JSON RESPONSE:")
-              print(json.dumps(data, indent=2, ensure_ascii=False)[:20000])
-              print()
-
-              # Search recursively for GTA VI / PPSA01547
-              def walk(obj, path="root"):
-                  if isinstance(obj, dict):
-                      for k, v in obj.items():
-                          current = f"{path}.{k}"
-
-                          if isinstance(v, (str, int, float, bool)):
-                              s = str(v)
-
-                              if (
-                                  TITLE_ID.lower() in s.lower()
-                                  or "gta" in s.lower()
-                                  or "grand theft auto" in s.lower()
-                              ):
-                                  print(
-                                      f"MATCH {current}: {s}"
-                                  )
-
-                          walk(v, current)
-
-                  elif isinstance(obj, list):
-                      for i, v in enumerate(obj):
-                          walk(v, f"{path}[{i}]")
-
-              print("SEARCHING JSON FOR GTA VI:")
-              walk(data)
-              print()
-
-          except Exception:
-              print("Response is not valid JSON.")
-              print()
-
-          # ----------------------------------------
-          # Look for useful URLs / title links
-          # ----------------------------------------
-
-          print("========================================")
-          print("POSSIBLE TITLE LINKS")
-          print("========================================")
-
-          links = re.findall(
-              r'https?://[^"\'>\s]+|href=["\']([^"\']+)["\']',
-              text,
-              re.I
-          )
-
-          found_links = set()
-
-          for item in links:
-              if isinstance(item, tuple):
-                  item = item[0] or ""
-
-              if not item:
-                  continue
-
-              low = item.lower()
-
-              if (
-                  "ppsa01547" in low
-                  or "prosperopatches.com/" in low
-                  or "patch" in low
-              ):
-                  found_links.add(item)
-
-          for link in sorted(found_links):
-              print(link)
-
-          print()
-
-          # ----------------------------------------
-          # Look for keys / identifiers
-          # ----------------------------------------
-
-          print("========================================")
-          print("POSSIBLE KEYS / IDENTIFIERS")
-          print("========================================")
-
-          patterns = [
-              r'"key"\s*:\s*"([^"]+)"',
-              r"'key'\s*:\s*'([^']+)'",
-              r'data-key=["\']([^"\']+)',
-              r'"titleid"\s*:\s*"([^"]+)"',
-              r'"titleId"\s*:\s*"([^"]+)"',
-              r'"contentid"\s*:\s*"([^"]+)"',
-              r'"contentId"\s*:\s*"([^"]+)"'
+          terms = [
+              "Grand Theft Auto VI",
+              "Grand Theft Auto 6",
+              "GTA VI",
+              "GTA 6"
           ]
 
-          found = set()
+          for term in terms:
 
-          for pattern in patterns:
-              for match in re.findall(pattern, text, re.I):
-                  found.add(match)
+              url = (
+                  "https://prosperopatches.com/api/internal/search?term="
+                  + quote(term)
+              )
 
-          for value in sorted(found):
-              print(value)
+              print()
+              print("=" * 80)
+              print("SEARCH:", term)
+              print("=" * 80)
 
-          if not found:
-              print("No key/identifier found in search response.")
+              try:
+                  r = requests.get(
+                      url,
+                      headers=headers,
+                      timeout=30
+                  )
+
+                  print("HTTP:", r.status_code)
+
+                  if not r.ok:
+                      print("ERROR")
+                      print(r.text[:5000])
+                      continue
+
+                  data = r.json()
+
+                  print(
+                      json.dumps(
+                          data,
+                          indent=2,
+                          ensure_ascii=False
+                      )[:20000]
+                  )
+
+                  results = data.get("results", [])
+
+                  print()
+                  print("RESULT COUNT:", len(results))
+
+                  for i, item in enumerate(results):
+                      print()
+                      print("RESULT", i + 1)
+
+                      if isinstance(item, dict):
+                          for key, value in item.items():
+                              print(f"{key}: {value}")
+                      else:
+                          print(item)
+
+              except Exception as e:
+                  print("ERROR:", repr(e))
 
           print()
-
-          print("========================================")
-          print("DONE")
-          print("========================================")
+          print("=" * 80)
+          print("SEARCH COMPLETE")
+          print("=" * 80)
           PY
