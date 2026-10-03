@@ -80,7 +80,11 @@ async function getFile(filename) {
   const url =
     `https://raw.githubusercontent.com/amin575/PS5-Update-Tracker/main/${filename}`;
 
-  const response = await fetch(url);
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent": "PS5-Updates-Bot"
+    }
+  });
 
   if (!response.ok) {
     return "اطلاعات هنوز در GitHub ذخیره نشده.";
