@@ -18,183 +18,97 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install PS5 update parser
-        run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install ps5-updates requests
-
-      - name: Check Fortnite PS5 update
+      - name: Check Fortnite update
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          FORTNITE_UPDATE_XML: ${{ secrets.FORTNITE_UPDATE_XML }}
 
         run: |
           cat > check_fortnite.py <<'PY'
           import os
+          import re
           import subprocess
           import requests
 
-          from ps5_updates import title as ps5up
-
+          BUILD_URL = "https://raw.githubusercontent.com/Fortnite-Datamining/Fortnite-Datamining/main/data/meta/build_info.json"
 
           STATE_FILE = "fortnite_version.txt"
           LATEST_FILE = "fortnite_latest.txt"
 
           BOT_TOKEN = os.environ["BOT_TOKEN"]
           CHAT_ID = os.environ["CHAT_ID"]
-          UPDATE_XML = os.environ["FORTNITE_UPDATE_XML"]
 
+          print("Checking Fortnite...")
 
-          if not UPDATE_XML:
-              raise RuntimeError(
-                  "FORTNITE_UPDATE_XML secret is missing"
-              )
+          response = requests.get(BUILD_URL, timeout=30)
+          response.raise_for_status()
 
+          data = response.json()
 
-          print("========================================")
-          print("FORTNITE PS5 UPDATE TRACKER")
-          print("========================================")
+          build = str(data.get("build", "")).strip()
 
+          if not build:
+              raise RuntimeError("Fortnite build not found")
 
-          print("Loading PSN update XML...")
+          print("Build:", build)
 
-          title = ps5up.Ps5TitleUpdate.from_url(
-              UPDATE_XML
+          match = re.search(r"Release-([0-9]+(?:\.[0-9]+)+)", build)
+
+          if not match:
+              raise RuntimeError("Could not detect Fortnite version")
+
+          game_version = match.group(1)
+
+          print("Fortnite version:", game_version)
+
+          known_ps5_versions = {
+              "42.20": "01.000.232"
+          }
+
+          ps5_version = known_ps5_versions.get(
+              game_version,
+              "نامشخص"
           )
 
-          title.get_update()
+          size = "نامشخص"
 
-
-          latest = title.latest
-
-
-          if latest is None:
-              raise RuntimeError(
-                  "No Fortnite PS5 update package found"
-              )
-
-
-          version = str(
-              latest.version
-          ).strip()
-
-
-          system_version = str(
-              latest.system_version
-          ).strip()
-
-
-          update_size = str(
-              latest.update_size
-          ).strip()
-
-
-          creation_date = str(
-              latest.pkg.param.creation_date
-          ).strip()
-
-
-          title_id = str(
-              title.title_id
-          ).strip()
-
-
-          content_id = str(
-              title.content_id
-          ).strip()
-
-
-          print("Title ID:", title_id)
-          print("Content ID:", content_id)
-          print("PS5 Version:", version)
-          print("Required System:", system_version)
-          print("Creation Date:", creation_date)
-          print("Update Size:", update_size)
-
-
-          state = version
-
+          state = game_version + "|" + ps5_version
 
           old_state = ""
 
-
           if os.path.exists(STATE_FILE):
-              with open(
-                  STATE_FILE,
-                  "r",
-                  encoding="utf-8"
-              ) as f:
+              with open(STATE_FILE, "r", encoding="utf-8") as f:
                   old_state = f.read().strip()
 
-
           latest_text = (
-              "PS5 Version: "
-              + version
-              + "\n"
-              "Fortnite Version: "
-              + "نامشخص"
-              + "\n"
-              "Size: "
-              + update_size
-              + "\n"
-              "Required System: "
-              + system_version
-              + "\n"
-              "Release: "
-              + creation_date
-              + "\n"
+              "Version: " + ps5_version + "\n"
+              "Fortnite Version: " + game_version + "\n"
+              "Size: " + size + "\n"
           )
 
-
-          with open(
-              LATEST_FILE,
-              "w",
-              encoding="utf-8"
-          ) as f:
+          with open(LATEST_FILE, "w", encoding="utf-8") as f:
               f.write(latest_text)
 
-
-          print(
-              "Previous version:",
-              old_state if old_state else "None"
-          )
-
+          print("Previous state:", old_state or "None")
+          print("Current state:", state)
 
           if not old_state:
-              print("First run.")
+              print("First run. Saving state.")
 
-              with open(
-                  STATE_FILE,
-                  "w",
-                  encoding="utf-8"
-              ) as f:
+              with open(STATE_FILE, "w", encoding="utf-8") as f:
                   f.write(state)
 
-
           elif old_state != state:
-
               print("NEW FORTNITE UPDATE DETECTED")
-
 
               message = (
                   "🎮 PS5 UPDATE\n\n"
                   "Fortnite\n\n"
-                  "PS5 Version: "
-                  + version
-                  + "\n"
-                  "Size: "
-                  + update_size
-                  + "\n"
-                  "Required System: "
-                  + system_version
-                  + "\n"
-                  "Release: "
-                  + creation_date
-                  + "\n\n"
+                  "PS5 Version: " + ps5_version + "\n"
+                  "Fortnite Version: " + game_version + "\n"
+                  "Size: " + size + "\n\n"
                   "🆕 Update جدید شناسایی شد"
               )
-
 
               telegram_url = (
                   "https://api.telegram.org/bot"
@@ -202,8 +116,7 @@ jobs:
                   + "/sendMessage"
               )
 
-
-              response = requests.post(
+              telegram_response = requests.post(
                   telegram_url,
                   data={
                       "chat_id": CHAT_ID,
@@ -212,45 +125,27 @@ jobs:
                   timeout=30
               )
 
-
               print(
-                  "Telegram:",
-                  response.status_code
+                  "Telegram response:",
+                  telegram_response.status_code
               )
 
+              if telegram_response.status_code != 200:
+                  print(telegram_response.text)
+                  raise RuntimeError("Telegram notification failed")
 
-              if response.status_code != 200:
-                  print(response.text)
-                  raise RuntimeError(
-                      "Telegram notification failed"
-                  )
-
-
-              with open(
-                  STATE_FILE,
-                  "w",
-                  encoding="utf-8"
-              ) as f:
+              with open(STATE_FILE, "w", encoding="utf-8") as f:
                   f.write(state)
 
-
               print("Notification sent.")
-
 
           else:
               print("No new Fortnite update.")
 
-
           subprocess.run(
-              [
-                  "git",
-                  "config",
-                  "user.name",
-                  "github-actions[bot]"
-              ],
+              ["git", "config", "user.name", "github-actions[bot]"],
               check=True
           )
-
 
           subprocess.run(
               [
@@ -262,60 +157,32 @@ jobs:
               check=True
           )
 
-
           subprocess.run(
-              [
-                  "git",
-                  "add",
-                  STATE_FILE,
-                  LATEST_FILE
-              ],
+              ["git", "add", STATE_FILE, LATEST_FILE],
               check=True
           )
 
-
           changed = subprocess.run(
-              [
-                  "git",
-                  "diff",
-                  "--cached",
-                  "--quiet"
-              ]
+              ["git", "diff", "--cached", "--quiet"]
           )
 
-
           if changed.returncode != 0:
-
               subprocess.run(
-                  [
-                      "git",
-                      "commit",
-                      "-m",
-                      "Update Fortnite tracker"
-                  ],
+                  ["git", "commit", "-m", "Update Fortnite tracker"],
                   check=True
               )
 
-
               subprocess.run(
-                  [
-                      "git",
-                      "push",
-                      "origin",
-                      "main"
-                  ],
+                  ["git", "push", "origin", "main"],
                   check=True
               )
 
-
-              print("Files pushed to GitHub.")
-
+              print("Tracker files committed.")
 
           else:
-              print("No repository changes.")
+              print("No file changes.")
 
-
-          print("Tracker finished.")
+          print("Fortnite tracker finished.")
           PY
 
           python3 check_fortnite.py
