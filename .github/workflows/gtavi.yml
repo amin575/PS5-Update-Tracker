@@ -1,80 +1,175 @@
-name: GTA VI Find Page Data
+name: GTA VI PS5 Tracker
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
 
 jobs:
-  inspect:
+  gtavi:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Find GTA VI data
+      - name: Check GTA VI on Prospero
         run: |
           python3 - <<'PY'
           import requests
           import re
+          import json
+          from urllib.parse import quote
 
-          url = "https://prosperopatches.com/PPSA01547"
+          TITLE_ID = "PPSA01547"
+          SEARCH_URL = (
+              "https://prosperopatches.com/api/internal/search?term="
+              + quote(TITLE_ID)
+          )
+
+          headers = {
+              "User-Agent": "Mozilla/5.0",
+              "Accept": "application/json, text/plain, */*",
+              "Referer": "https://prosperopatches.com/"
+          }
+
+          print("========================================")
+          print("GTA VI PS5 TRACKER")
+          print("Title ID:", TITLE_ID)
+          print("========================================")
+          print()
 
           r = requests.get(
-              url,
-              headers={"User-Agent": "Mozilla/5.0"},
+              SEARCH_URL,
+              headers=headers,
               timeout=30
           )
 
+          print("Search HTTP:", r.status_code)
+          print("Search URL:", SEARCH_URL)
+          print()
+
+          if not r.ok:
+              print("ERROR: Prospero search failed.")
+              print(r.text[:5000])
+              raise SystemExit(1)
+
           text = r.text
 
-          # Remove HTML tags only for easier inspection
-          clean = re.sub(r'<[^>]+>', ' ', text)
-          clean = re.sub(r'\s+', ' ', clean)
-
-          print("HTTP:", r.status_code)
-          print("SIZE:", len(text))
+          print("RAW SEARCH RESPONSE:")
+          print(text[:10000])
           print()
 
-          keywords = [
-              "Grand Theft Auto",
-              "GTA",
-              "PPSA01547",
-              "EP1004",
-              "PPSA",
-              "key",
-              "patch",
-              "title"
-          ]
+          # ----------------------------------------
+          # Try JSON first
+          # ----------------------------------------
 
-          for keyword in keywords:
-              print("=" * 80)
-              print("KEYWORD:", keyword)
+          try:
+              data = r.json()
 
-              matches = list(re.finditer(
-                  re.escape(keyword),
-                  text,
-                  re.I
-              ))
+              print("JSON RESPONSE:")
+              print(json.dumps(data, indent=2, ensure_ascii=False)[:20000])
+              print()
 
-              print("MATCHES:", len(matches))
+              # Search recursively for GTA VI / PPSA01547
+              def walk(obj, path="root"):
+                  if isinstance(obj, dict):
+                      for k, v in obj.items():
+                          current = f"{path}.{k}"
 
-              for m in matches[:10]:
-                  start = max(0, m.start() - 1000)
-                  end = min(len(text), m.end() + 2000)
+                          if isinstance(v, (str, int, float, bool)):
+                              s = str(v)
 
-                  print()
-                  print(text[start:end])
+                              if (
+                                  TITLE_ID.lower() in s.lower()
+                                  or "gta" in s.lower()
+                                  or "grand theft auto" in s.lower()
+                              ):
+                                  print(
+                                      f"MATCH {current}: {s}"
+                                  )
 
-          print()
-          print("=" * 80)
-          print("LINKS")
-          print("=" * 80)
+                          walk(v, current)
+
+                  elif isinstance(obj, list):
+                      for i, v in enumerate(obj):
+                          walk(v, f"{path}[{i}]")
+
+              print("SEARCHING JSON FOR GTA VI:")
+              walk(data)
+              print()
+
+          except Exception:
+              print("Response is not valid JSON.")
+              print()
+
+          # ----------------------------------------
+          # Look for useful URLs / title links
+          # ----------------------------------------
+
+          print("========================================")
+          print("POSSIBLE TITLE LINKS")
+          print("========================================")
 
           links = re.findall(
-              r'href=["\']([^"\']+)["\']',
+              r'https?://[^"\'>\s]+|href=["\']([^"\']+)["\']',
               text,
               re.I
           )
 
-          for link in links:
-              if "PPSA" in link or "patch" in link.lower() or "title" in link.lower():
-                  print(link)
+          found_links = set()
 
+          for item in links:
+              if isinstance(item, tuple):
+                  item = item[0] or ""
+
+              if not item:
+                  continue
+
+              low = item.lower()
+
+              if (
+                  "ppsa01547" in low
+                  or "prosperopatches.com/" in low
+                  or "patch" in low
+              ):
+                  found_links.add(item)
+
+          for link in sorted(found_links):
+              print(link)
+
+          print()
+
+          # ----------------------------------------
+          # Look for keys / identifiers
+          # ----------------------------------------
+
+          print("========================================")
+          print("POSSIBLE KEYS / IDENTIFIERS")
+          print("========================================")
+
+          patterns = [
+              r'"key"\s*:\s*"([^"]+)"',
+              r"'key'\s*:\s*'([^']+)'",
+              r'data-key=["\']([^"\']+)',
+              r'"titleid"\s*:\s*"([^"]+)"',
+              r'"titleId"\s*:\s*"([^"]+)"',
+              r'"contentid"\s*:\s*"([^"]+)"',
+              r'"contentId"\s*:\s*"([^"]+)"'
+          ]
+
+          found = set()
+
+          for pattern in patterns:
+              for match in re.findall(pattern, text, re.I):
+                  found.add(match)
+
+          for value in sorted(found):
+              print(value)
+
+          if not found:
+              print("No key/identifier found in search response.")
+
+          print()
+
+          print("========================================")
+          print("DONE")
+          print("========================================")
           PY
