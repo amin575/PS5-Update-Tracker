@@ -5,87 +5,304 @@ on:
   schedule:
     - cron: "*/30 * * * *"
 
+permissions:
+  contents: write
+
 jobs:
   gtavi:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Find GTA VI on Prospero
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check GTA VI
         run: |
           python3 - <<'PY'
           import requests
+          import re
           import json
-          from urllib.parse import quote
+          import os
+
+          TITLE_ID = "PPSA01547"
+          BASE = "https://prosperopatches.com"
+          PAGE_URL = f"{BASE}/{TITLE_ID}"
 
           headers = {
               "User-Agent": "Mozilla/5.0",
-              "Accept": "application/json, text/plain, */*",
-              "Referer": "https://prosperopatches.com/"
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
           }
 
-          terms = [
-              "Grand Theft Auto VI",
-              "Grand Theft Auto 6",
-              "GTA VI",
-              "GTA 6"
-          ]
+          print("=" * 70)
+          print("GTA VI PS5 TRACKER")
+          print("Title ID:", TITLE_ID)
+          print("=" * 70)
 
-          for term in terms:
+          # --------------------------------------------------
+          # 1. Open GTA VI page
+          # --------------------------------------------------
 
-              url = (
-                  "https://prosperopatches.com/api/internal/search?term="
-                  + quote(term)
-              )
+          r = requests.get(
+              PAGE_URL,
+              headers=headers,
+              timeout=30
+          )
+
+          print("PAGE HTTP:", r.status_code)
+          print("PAGE SIZE:", len(r.text))
+
+          html = r.text
+
+          # --------------------------------------------------
+          # 2. Check whether Prospero actually has the title
+          # --------------------------------------------------
+
+          if "dynpatch" not in html.lower():
 
               print()
-              print("=" * 80)
-              print("SEARCH:", term)
-              print("=" * 80)
+              print("GTA VI is not indexed by Prospero yet.")
+              print()
+              print("No dynpatch container was found.")
+              print("Tracker will keep checking automatically.")
+              print()
 
-              try:
-                  r = requests.get(
-                      url,
-                      headers=headers,
-                      timeout=30
-                  )
-
-                  print("HTTP:", r.status_code)
-
-                  if not r.ok:
-                      print("ERROR")
-                      print(r.text[:5000])
-                      continue
-
-                  data = r.json()
-
-                  print(
-                      json.dumps(
-                          data,
-                          indent=2,
-                          ensure_ascii=False
-                      )[:20000]
-                  )
-
-                  results = data.get("results", [])
-
-                  print()
-                  print("RESULT COUNT:", len(results))
-
-                  for i, item in enumerate(results):
-                      print()
-                      print("RESULT", i + 1)
-
-                      if isinstance(item, dict):
-                          for key, value in item.items():
-                              print(f"{key}: {value}")
-                      else:
-                          print(item)
-
-              except Exception as e:
-                  print("ERROR:", repr(e))
+              raise SystemExit(0)
 
           print()
-          print("=" * 80)
-          print("SEARCH COMPLETE")
-          print("=" * 80)
+          print("GTA VI patch container FOUND.")
+          print()
+
+          # --------------------------------------------------
+          # 3. Extract title ID + per-title key
+          # --------------------------------------------------
+
+          titleid = None
+          key = None
+
+          # Normal Prospero format
+          match = re.search(
+              r'data-titleid="([^"]+)"\s+data-key="([0-9a-f]+)"',
+              html,
+              re.I
+          )
+
+          if match:
+              titleid = match.group(1)
+              key = match.group(2)
+
+          # Alternative packed format
+          if not key:
+
+              match = re.search(
+                  r'id="dynpatch"[^>]*data-loadparams="([^"]+)"',
+                  html,
+                  re.I
+              )
+
+              if match:
+
+                  packed = match.group(1)
+
+                  m_title = re.search(
+                      r'["\']titleid["\']\s*:\s*["\']([A-Z0-9]+)["\']',
+                      packed,
+                      re.I
+                  )
+
+                  m_key = re.search(
+                      r'["\']key["\']\s*:\s*["\']([0-9a-f]+)["\']',
+                      packed,
+                      re.I
+                  )
+
+                  if m_title:
+                      titleid = m_title.group(1)
+
+                  if m_key:
+                      key = m_key.group(1)
+
+          print("TITLE ID:", titleid)
+          print("KEY FOUND:", bool(key))
+
+          if not key:
+
+              print()
+              print("ERROR: dynpatch exists but no per-title key was found.")
+              print("Prospero markup may have changed.")
+              raise SystemExit(1)
+
+          # --------------------------------------------------
+          # 4. Ask Prospero for patch history
+          # --------------------------------------------------
+
+          api_url = f"{BASE}/api/internal/loadpatches"
+
+          payload = {
+              "titleid": titleid or TITLE_ID,
+              "key": key
+          }
+
+          api_headers = {
+              "User-Agent": "Mozilla/5.0",
+              "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+              "Accept": "application/json",
+              "Referer": PAGE_URL
+          }
+
+          p = requests.post(
+              api_url,
+              headers=api_headers,
+              data=json.dumps(payload),
+              timeout=30
+          )
+
+          print()
+          print("LOADPATCHES HTTP:", p.status_code)
+
+          if not p.ok:
+              print(p.text[:10000])
+              raise SystemExit(1)
+
+          try:
+              data = p.json()
+          except Exception:
+              print("ERROR: Prospero returned non-JSON data.")
+              print(p.text[:10000])
+              raise SystemExit(1)
+
+          print()
+          print("PROSPERO RESPONSE:")
+          print(
+              json.dumps(
+                  data,
+                  indent=2,
+                  ensure_ascii=False
+              )[:30000]
+          )
+
+          if not data.get("success"):
+              print()
+              print("Prospero did not return patch data.")
+              raise SystemExit(1)
+
+          patches = data.get("patches", [])
+
+          print()
+          print("PATCH COUNT:", len(patches))
+
+          if not patches:
+              print("No GTA VI patches/pre-load data yet.")
+              raise SystemExit(0)
+
+          # --------------------------------------------------
+          # 5. Normalize patches
+          # --------------------------------------------------
+
+          normalized = []
+
+          for patch in patches:
+
+              version = (
+                  patch.get("content_ver")
+                  or patch.get("version")
+              )
+
+              date = (
+                  patch.get("import_date")
+                  or patch.get("creation_date")
+              )
+
+              size = patch.get("filesize")
+              firmware = patch.get("required_firmware")
+
+              normalized.append({
+                  "version": version,
+                  "date": date[:10] if isinstance(date, str) else date,
+                  "size": size,
+                  "firmware": firmware,
+                  "latest": bool(patch.get("is_latest"))
+              })
+
+          normalized = [
+              x for x in normalized
+              if x["version"]
+          ]
+
+          if not normalized:
+              print("No usable versions found.")
+              raise SystemExit(0)
+
+          # Latest flag first, otherwise newest entry
+          latest = next(
+              (x for x in normalized if x["latest"]),
+              normalized[0]
+          )
+
+          print()
+          print("=" * 70)
+          print("LATEST GTA VI DATA")
+          print("=" * 70)
+
+          print("VERSION:", latest["version"])
+          print("DATE:", latest["date"])
+          print("SIZE:", latest["size"])
+          print("REQUIRED FIRMWARE:", latest["firmware"])
+
+          # --------------------------------------------------
+          # 6. Save current state
+          # --------------------------------------------------
+
+          state_file = "gtavi_latest.txt"
+
+          previous = ""
+
+          if os.path.exists(state_file):
+              with open(state_file, "r", encoding="utf-8") as f:
+                  previous = f.read().strip()
+
+          current = "\n".join([
+              f"GTA VI PS5",
+              f"Version: {latest['version']}",
+              f"Date: {latest['date']}",
+              f"Size: {latest['size']}",
+              f"Required Firmware: {latest['firmware']}",
+          ])
+
+          print()
+          print("PREVIOUS STATE:")
+          print(previous if previous else "(none)")
+
+          print()
+          print("CURRENT STATE:")
+          print(current)
+
+          if previous == current:
+              print()
+              print("NO CHANGE.")
+              raise SystemExit(0)
+
+          print()
+          print("========================================")
+          print("NEW GTA VI DATA DETECTED")
+          print("========================================")
+
+          with open(state_file, "w", encoding="utf-8") as f:
+              f.write(current + "\n")
+
           PY
+
+      - name: Save GTA VI state
+        run: |
+          if [ -f gtavi_latest.txt ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+            git add gtavi_latest.txt
+
+            if git diff --cached --quiet; then
+              echo "No state change."
+            else
+              git commit -m "Update GTA VI tracker"
+              git push
+            fi
+          fi
