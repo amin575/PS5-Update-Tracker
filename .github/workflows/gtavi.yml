@@ -15,8 +15,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Check GTA VI
         env:
@@ -33,10 +31,8 @@ jobs:
           TITLE_ID = "PPSA01547"
           BASE = "https://prosperopatches.com"
           PAGE_URL = f"{BASE}/{TITLE_ID}"
-          STATE_FILE = "gtavi_latest.txt"
 
-          BOT_TOKEN = os.environ["BOT_TOKEN"]
-          CHAT_ID = os.environ["CHAT_ID"]
+          STATE_FILE = "gtavi_latest.txt"
 
           headers = {
               "User-Agent": "Mozilla/5.0",
@@ -48,10 +44,6 @@ jobs:
           print("Title ID:", TITLE_ID)
           print("=" * 70)
 
-          # --------------------------------------------------
-          # 1. Open GTA VI page
-          # --------------------------------------------------
-
           r = requests.get(
               PAGE_URL,
               headers=headers,
@@ -62,38 +54,88 @@ jobs:
           print("PAGE SIZE:", len(r.text))
 
           if r.status_code != 200:
-              print("Failed to fetch GTA VI page")
+              print("Failed to fetch Prospero page")
               raise SystemExit(1)
 
           html = r.text
 
           # --------------------------------------------------
-          # 2. Check whether Prospero actually has the title
+          # NO GTA VI DATA YET
           # --------------------------------------------------
 
           if "dynpatch" not in html.lower():
 
               print()
               print("GTA VI is not indexed by Prospero yet.")
-              print()
               print("No dynpatch container was found.")
               print("Tracker will keep checking automatically.")
-              print()
+
+              previous = ""
+
+              if os.path.exists(STATE_FILE):
+                  with open(STATE_FILE, "r", encoding="utf-8") as f:
+                      previous = f.read().strip()
+
+              initial_state = """GTA VI PS5
+          Status: هنوز اطلاعاتی در Prospero ثبت نشده.
+          Tracker: Active"""
+
+              # فقط اگر فایل هنوز وجود نداشته باشد،
+              # وضعیت اولیه را ثبت و یک نوتیف ارسال کن.
+              if not previous:
+
+                  print()
+                  print("Creating initial GTA VI state...")
+
+                  message = """🎮 PS5 UPDATE
+
+          GTA VI
+
+          ⏳ هنوز اطلاعاتی در Prospero ثبت نشده.
+
+          Tracker فعال است و به‌صورت خودکار بررسی می‌کند."""
+
+                  telegram_url = f"https://api.telegram.org/bot{os.environ['BOT_TOKEN']}/sendMessage"
+
+                  response = requests.post(
+                      telegram_url,
+                      data={
+                          "chat_id": os.environ["CHAT_ID"],
+                          "text": message
+                      },
+                      timeout=30
+                  )
+
+                  print("Telegram HTTP:", response.status_code)
+
+                  if response.status_code != 200:
+                      print("Telegram notification failed")
+                      print(response.text)
+                      raise SystemExit(1)
+
+                  print("Initial Telegram notification sent")
+
+                  with open(STATE_FILE, "w", encoding="utf-8") as f:
+                      f.write(initial_state + "\n")
+
+              else:
+                  print()
+                  print("Initial GTA VI state already exists.")
+                  print("No repeated notification.")
 
               raise SystemExit(0)
+
+          # --------------------------------------------------
+          # GTA VI DATA FOUND
+          # --------------------------------------------------
 
           print()
           print("GTA VI patch container FOUND.")
           print()
 
-          # --------------------------------------------------
-          # 3. Extract title ID + per-title key
-          # --------------------------------------------------
-
           titleid = None
           key = None
 
-          # Normal Prospero format
           match = re.search(
               r'data-titleid="([^"]+)"\s+data-key="([0-9a-f]+)"',
               html,
@@ -104,9 +146,7 @@ jobs:
               titleid = match.group(1)
               key = match.group(2)
 
-          # Alternative packed format
           if not key:
-
               match = re.search(
                   r'id="dynpatch"[^>]*data-loadparams="([^"]+)"',
                   html,
@@ -114,7 +154,6 @@ jobs:
               )
 
               if match:
-
                   packed = match.group(1)
 
                   m_title = re.search(
@@ -139,15 +178,10 @@ jobs:
           print("KEY FOUND:", bool(key))
 
           if not key:
-
               print()
               print("ERROR: dynpatch exists but no per-title key was found.")
               print("Prospero markup may have changed.")
               raise SystemExit(1)
-
-          # --------------------------------------------------
-          # 4. Ask Prospero for patch history
-          # --------------------------------------------------
 
           api_url = f"{BASE}/api/internal/loadpatches"
 
@@ -208,10 +242,6 @@ jobs:
               print("No GTA VI patches/pre-load data yet.")
               raise SystemExit(0)
 
-          # --------------------------------------------------
-          # 5. Normalize patches
-          # --------------------------------------------------
-
           normalized = []
 
           for patch in patches:
@@ -246,7 +276,6 @@ jobs:
               print("No usable versions found.")
               raise SystemExit(0)
 
-          # Latest flag first, otherwise newest entry
           latest = next(
               (x for x in normalized if x["latest"]),
               normalized[0]
@@ -261,10 +290,6 @@ jobs:
           print("DATE:", latest["date"])
           print("SIZE:", latest["size"])
           print("REQUIRED FIRMWARE:", latest["firmware"])
-
-          # --------------------------------------------------
-          # 6. Read previous state
-          # --------------------------------------------------
 
           previous = ""
 
@@ -289,24 +314,23 @@ jobs:
           print(current)
 
           # --------------------------------------------------
-          # 7. Check for change
+          # NO CHANGE
           # --------------------------------------------------
 
           if previous == current:
-
               print()
               print("NO CHANGE.")
               print("No Telegram notification needed.")
               raise SystemExit(0)
 
+          # --------------------------------------------------
+          # NEW DATA / UPDATE
+          # --------------------------------------------------
+
           print()
           print("========================================")
           print("NEW GTA VI DATA DETECTED")
           print("========================================")
-
-          # --------------------------------------------------
-          # 8. Send Telegram notification
-          # --------------------------------------------------
 
           if previous:
 
@@ -334,12 +358,12 @@ jobs:
 
           🆕 اولین اطلاعات GTA VI شناسایی شد"""
 
-          telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+          telegram_url = f"https://api.telegram.org/bot{os.environ['BOT_TOKEN']}/sendMessage"
 
           response = requests.post(
               telegram_url,
               data={
-                  "chat_id": CHAT_ID,
+                  "chat_id": os.environ["CHAT_ID"],
                   "text": message
               },
               timeout=30
@@ -354,18 +378,16 @@ jobs:
 
           print("Telegram notification sent")
 
-          # --------------------------------------------------
-          # 9. Save current state
-          # --------------------------------------------------
-
+          # فقط بعد از موفقیت تلگرام، وضعیت جدید ذخیره می‌شود.
           with open(STATE_FILE, "w", encoding="utf-8") as f:
               f.write(current + "\n")
 
-          print("GTA VI state saved.")
+          # --------------------------------------------------
+          # SAVE TO GITHUB
+          # --------------------------------------------------
 
-          # --------------------------------------------------
-          # 10. Update repository
-          # --------------------------------------------------
+          print()
+          print("Updating repository state...")
 
           subprocess.run(
               ["git", "config", "user.name", "github-actions[bot]"],
@@ -408,14 +430,11 @@ jobs:
                   check=True
               )
 
-              print("GTA VI state saved successfully.")
+              print("GTA VI state saved successfully")
 
           else:
-              print("No repository changes.")
+              print("No repository changes")
 
           print()
-          print("=" * 70)
-          print("GTA VI TRACKER FINISHED")
-          print("=" * 70)
-
+          print("GTA VI tracker finished")
           PY
