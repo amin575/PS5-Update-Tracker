@@ -24,6 +24,7 @@ export default {
       const warzone = await getFile("warzone_latest.txt");
       const fortnite = await getFile("fortnite_latest.txt");
       const gtavi = await getFile("gtavi_latest.txt");
+      const fc27 = await getFile("fc27_latest.txt");
 
       await sendTelegram(
         env.BOT_TOKEN,
@@ -47,6 +48,12 @@ export default {
         env.BOT_TOKEN,
         chatId,
         "🎮 GTA VI PS5\n\n" + gtavi
+      );
+
+      await sendTelegram(
+        env.BOT_TOKEN,
+        chatId,
+        "⚽ FC 27 LITE PS5\n\n" + fc27
       );
 
       return new Response("OK");
