@@ -22,7 +22,7 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
-          python3 - <<'PY'
+          cat > check_fc27.py <<'PY'
           import os
           import re
           import urllib.request
@@ -30,21 +30,14 @@ jobs:
           import subprocess
 
           NEWS_URL = "https://www.ea.com/games/ea-sports-fc/fc-27/news"
-
           STATE_FILE = "fc27_version.txt"
           LATEST_FILE = "fc27_latest.txt"
 
-          GAME_NAME = "FC 27 LITE PS5"
-
-          # Known verified PS5 versions
           KNOWN_PS5_VERSIONS = {
               "1.0.3": "01.000.006"
           }
 
-          # ============================================================
-          # Get official EA news page
-          # ============================================================
-
+          # Get EA news page
           request = urllib.request.Request(
               NEWS_URL,
               headers={
@@ -53,147 +46,58 @@ jobs:
           )
 
           try:
-              with urllib.request.urlopen(
-                  request,
-                  timeout=30
-              ) as response:
+              with urllib.request.urlopen(request, timeout=30) as response:
                   html = response.read().decode(
                       "utf-8",
                       errors="ignore"
                   )
           except Exception as e:
-              print("Failed to read EA news page:", e)
+              print("EA page error:", e)
               raise SystemExit(1)
 
-          # ============================================================
-          # Find all Title Update versions
-          # ============================================================
-
+          # Find Title Updates
           versions = re.findall(
               r"Title\s+Update\s+v(\d+\.\d+\.\d+)",
               html,
-              flags=re.IGNORECASE
+              re.IGNORECASE
           )
 
           if not versions:
               print("No FC 27 Title Update found.")
               raise SystemExit(1)
 
-          def version_tuple(version):
-              return tuple(
-                  int(x)
-                  for x in version.split(".")
-              )
+          def version_tuple(v):
+              return tuple(int(x) for x in v.split("."))
 
           game_version = max(
               versions,
               key=version_tuple
           )
 
-          print(
-              "Latest EA Title Update:",
-              game_version
-          )
+          print("Latest FC 27 version:", game_version)
 
-          # ============================================================
-          # Find article URL
-          # ============================================================
-
-          article_url = None
-
-          link_pattern = re.compile(
-              r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>'
-              r'.{0,1500}?Title\s+Update\s+v'
-              + re.escape(game_version),
-              flags=re.IGNORECASE | re.DOTALL
-          )
-
-          match = link_pattern.search(html)
-
-          if match:
-              article_url = match.group(1)
-
-              if article_url.startswith("/"):
-                  article_url = (
-                      "https://www.ea.com"
-                      + article_url
-                  )
-
-              elif not article_url.startswith("http"):
-                  article_url = (
-                      "https://www.ea.com/"
-                      + article_url
-                  )
-
-          print(
-              "Article URL:",
-              article_url
-          )
-
-          # ============================================================
-          # Find release date
-          # ============================================================
-
-          release_date = "نامشخص"
-
-          if article_url:
-              try:
-                  article_request = urllib.request.Request(
-                      article_url,
-                      headers={
-                          "User-Agent":
-                          "Mozilla/5.0 PS5-Update-Tracker"
-                      }
-                  )
-
-                  with urllib.request.urlopen(
-                      article_request,
-                      timeout=30
-                  ) as response:
-                      article_html = response.read().decode(
-                          "utf-8",
-                          errors="ignore"
-                      )
-
-                  date_matches = re.findall(
-                      r"20\d{2}-\d{2}-\d{2}",
-                      article_html
-                  )
-
-                  if date_matches:
-                      release_date = date_matches[0]
-
-              except Exception as e:
-                  print(
-                      "Could not read article date:",
-                      e
-                  )
-
-          # ============================================================
-          # PS5 version
-          # ============================================================
-
+          # Find PS5 version
           ps5_version = KNOWN_PS5_VERSIONS.get(
               game_version,
               "نامشخص"
           )
 
-          # ============================================================
-          # Real PS5 download size
-          #
-          # We do NOT use EA package/build sizes here.
-          # Until a verified PS5 package source is available,
-          # size remains unknown.
-          # ============================================================
-
+          # Size is intentionally unknown until verified PS5 data exists
           update_size = "نامشخص"
 
-          # ============================================================
+          # Find date
+          release_date = "نامشخص"
+
+          date_matches = re.findall(
+              r"20\d{2}-\d{2}-\d{2}",
+              html
+          )
+
+          if date_matches:
+              release_date = date_matches[0]
+
           # State
-          # ============================================================
-
           new_state = game_version
-
           old_state = ""
 
           if os.path.exists(STATE_FILE):
@@ -204,10 +108,6 @@ jobs:
               ) as f:
                   old_state = f.read().strip()
 
-          # ============================================================
-          # Message
-          # ============================================================
-
           message = f"""⚽ FC 27 LITE PS5
 
 Game Version: {game_version}
@@ -215,16 +115,9 @@ PS5 Version: {ps5_version}
 Date: {release_date}
 Update Size: {update_size}"""
 
-          print("")
-          print("========================================")
           print(message)
-          print("========================================")
-          print("")
 
-          # ============================================================
-          # Save latest information
-          # ============================================================
-
+          # Always keep latest information
           with open(
               LATEST_FILE,
               "w",
@@ -232,17 +125,11 @@ Update Size: {update_size}"""
           ) as f:
               f.write(message)
 
-          # ============================================================
-          # FIRST RUN
-          #
-          # Save current version without notification.
-          # ============================================================
-
+          # First run
           if not old_state:
 
-              print(
-                  "First run - saving current version."
-              )
+              print("First run.")
+              print("Saving current version without notification.")
 
               with open(
                   STATE_FILE,
@@ -252,12 +139,7 @@ Update Size: {update_size}"""
                   f.write(new_state)
 
               subprocess.run(
-                  [
-                      "git",
-                      "config",
-                      "user.name",
-                      "github-actions[bot]"
-                  ],
+                  ["git", "config", "user.name", "github-actions[bot]"],
                   check=True
               )
 
@@ -272,26 +154,15 @@ Update Size: {update_size}"""
               )
 
               subprocess.run(
-                  [
-                      "git",
-                      "add",
-                      STATE_FILE,
-                      LATEST_FILE
-                  ],
+                  ["git", "add", STATE_FILE, LATEST_FILE],
                   check=True
               )
 
               result = subprocess.run(
-                  [
-                      "git",
-                      "diff",
-                      "--cached",
-                      "--quiet"
-                  ]
+                  ["git", "diff", "--cached", "--quiet"]
               )
 
               if result.returncode != 0:
-
                   subprocess.run(
                       [
                           "git",
@@ -307,16 +178,9 @@ Update Size: {update_size}"""
                       check=True
                   )
 
-              print(
-                  "FC 27 tracker initialized."
-              )
-
               raise SystemExit(0)
 
-          # ============================================================
-          # NO NEW UPDATE
-          # ============================================================
-
+          # No new update
           if old_state == new_state:
 
               print(
@@ -324,12 +188,7 @@ Update Size: {update_size}"""
               )
 
               subprocess.run(
-                  [
-                      "git",
-                      "config",
-                      "user.name",
-                      "github-actions[bot]"
-                  ],
+                  ["git", "config", "user.name", "github-actions[bot]"],
                   check=True
               )
 
@@ -344,25 +203,15 @@ Update Size: {update_size}"""
               )
 
               subprocess.run(
-                  [
-                      "git",
-                      "add",
-                      LATEST_FILE
-                  ],
+                  ["git", "add", LATEST_FILE],
                   check=True
               )
 
               result = subprocess.run(
-                  [
-                      "git",
-                      "diff",
-                      "--cached",
-                      "--quiet"
-                  ]
+                  ["git", "diff", "--cached", "--quiet"]
               )
 
               if result.returncode != 0:
-
                   subprocess.run(
                       [
                           "git",
@@ -380,40 +229,18 @@ Update Size: {update_size}"""
 
               raise SystemExit(0)
 
-          # ============================================================
-          # NEW UPDATE DETECTED
-          # ============================================================
+          # New update
+          print("NEW FC 27 UPDATE DETECTED!")
 
-          print("")
-          print(
-              "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-          )
-          print(
-              "NEW FC 27 UPDATE DETECTED"
-          )
-          print(
-              "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-          )
-          print("")
-
-          bot_token = os.environ.get(
-              "BOT_TOKEN"
-          )
-
-          chat_id = os.environ.get(
-              "CHAT_ID"
-          )
+          bot_token = os.environ.get("BOT_TOKEN")
+          chat_id = os.environ.get("CHAT_ID")
 
           if not bot_token:
-              print(
-                  "BOT_TOKEN secret is missing."
-              )
+              print("BOT_TOKEN secret is missing.")
               raise SystemExit(1)
 
           if not chat_id:
-              print(
-                  "CHAT_ID secret is missing."
-              )
+              print("CHAT_ID secret is missing.")
               raise SystemExit(1)
 
           telegram_url = (
@@ -439,15 +266,8 @@ Update Size: {update_size}"""
               }
           )
 
-          # ============================================================
-          # Send notification
-          #
-          # State is saved ONLY after successful Telegram response.
-          # If Telegram fails, next run retries.
-          # ============================================================
-
+          # Send Telegram notification
           try:
-
               with urllib.request.urlopen(
                   telegram_request,
                   timeout=30
@@ -459,36 +279,27 @@ Update Size: {update_size}"""
                   )
 
               print(
-                  "Telegram response:",
+                  "Telegram:",
                   telegram_response
               )
 
               if '"ok":true' not in telegram_response:
-
-                  print(
-                      "Telegram did not confirm success."
-                  )
-
+                  print("Telegram failed.")
                   raise SystemExit(1)
 
           except Exception as e:
-
               print(
-                  "Telegram notification FAILED:",
+                  "Telegram notification failed:",
                   e
               )
 
               print(
-                  "State was NOT updated."
+                  "State will NOT be updated."
               )
 
               raise SystemExit(1)
 
-          # ============================================================
-          # Telegram succeeded
-          # Save new state
-          # ============================================================
-
+          # Telegram succeeded -> save state
           with open(
               STATE_FILE,
               "w",
@@ -497,12 +308,7 @@ Update Size: {update_size}"""
               f.write(new_state)
 
           subprocess.run(
-              [
-                  "git",
-                  "config",
-                  "user.name",
-                  "github-actions[bot]"
-              ],
+              ["git", "config", "user.name", "github-actions[bot]"],
               check=True
           )
 
@@ -517,26 +323,15 @@ Update Size: {update_size}"""
           )
 
           subprocess.run(
-              [
-                  "git",
-                  "add",
-                  STATE_FILE,
-                  LATEST_FILE
-              ],
+              ["git", "add", STATE_FILE, LATEST_FILE],
               check=True
           )
 
           result = subprocess.run(
-              [
-                  "git",
-                  "diff",
-                  "--cached",
-                  "--quiet"
-              ]
+              ["git", "diff", "--cached", "--quiet"]
           )
 
           if result.returncode != 0:
-
               subprocess.run(
                   [
                       "git",
@@ -552,12 +347,9 @@ Update Size: {update_size}"""
                   check=True
               )
 
-          print("")
           print(
-              "FC 27 update notification sent successfully."
+              "FC 27 notification sent successfully."
           )
-          print(
-              f"Saved state: {new_state}"
-          )
-          print("")
           PY
+
+          python3 check_fc27.py
