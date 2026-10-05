@@ -1,0 +1,563 @@
+name: FC 27 Lite Update Tracker
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check-fc27:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check FC 27 update
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import urllib.request
+          import urllib.parse
+          import subprocess
+
+          NEWS_URL = "https://www.ea.com/games/ea-sports-fc/fc-27/news"
+
+          STATE_FILE = "fc27_version.txt"
+          LATEST_FILE = "fc27_latest.txt"
+
+          GAME_NAME = "FC 27 LITE PS5"
+
+          # Known verified PS5 versions
+          KNOWN_PS5_VERSIONS = {
+              "1.0.3": "01.000.006"
+          }
+
+          # ============================================================
+          # Get official EA news page
+          # ============================================================
+
+          request = urllib.request.Request(
+              NEWS_URL,
+              headers={
+                  "User-Agent": "Mozilla/5.0 PS5-Update-Tracker"
+              }
+          )
+
+          try:
+              with urllib.request.urlopen(
+                  request,
+                  timeout=30
+              ) as response:
+                  html = response.read().decode(
+                      "utf-8",
+                      errors="ignore"
+                  )
+          except Exception as e:
+              print("Failed to read EA news page:", e)
+              raise SystemExit(1)
+
+          # ============================================================
+          # Find all Title Update versions
+          # ============================================================
+
+          versions = re.findall(
+              r"Title\s+Update\s+v(\d+\.\d+\.\d+)",
+              html,
+              flags=re.IGNORECASE
+          )
+
+          if not versions:
+              print("No FC 27 Title Update found.")
+              raise SystemExit(1)
+
+          def version_tuple(version):
+              return tuple(
+                  int(x)
+                  for x in version.split(".")
+              )
+
+          game_version = max(
+              versions,
+              key=version_tuple
+          )
+
+          print(
+              "Latest EA Title Update:",
+              game_version
+          )
+
+          # ============================================================
+          # Find article URL
+          # ============================================================
+
+          article_url = None
+
+          link_pattern = re.compile(
+              r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>'
+              r'.{0,1500}?Title\s+Update\s+v'
+              + re.escape(game_version),
+              flags=re.IGNORECASE | re.DOTALL
+          )
+
+          match = link_pattern.search(html)
+
+          if match:
+              article_url = match.group(1)
+
+              if article_url.startswith("/"):
+                  article_url = (
+                      "https://www.ea.com"
+                      + article_url
+                  )
+
+              elif not article_url.startswith("http"):
+                  article_url = (
+                      "https://www.ea.com/"
+                      + article_url
+                  )
+
+          print(
+              "Article URL:",
+              article_url
+          )
+
+          # ============================================================
+          # Find release date
+          # ============================================================
+
+          release_date = "نامشخص"
+
+          if article_url:
+              try:
+                  article_request = urllib.request.Request(
+                      article_url,
+                      headers={
+                          "User-Agent":
+                          "Mozilla/5.0 PS5-Update-Tracker"
+                      }
+                  )
+
+                  with urllib.request.urlopen(
+                      article_request,
+                      timeout=30
+                  ) as response:
+                      article_html = response.read().decode(
+                          "utf-8",
+                          errors="ignore"
+                      )
+
+                  date_matches = re.findall(
+                      r"20\d{2}-\d{2}-\d{2}",
+                      article_html
+                  )
+
+                  if date_matches:
+                      release_date = date_matches[0]
+
+              except Exception as e:
+                  print(
+                      "Could not read article date:",
+                      e
+                  )
+
+          # ============================================================
+          # PS5 version
+          # ============================================================
+
+          ps5_version = KNOWN_PS5_VERSIONS.get(
+              game_version,
+              "نامشخص"
+          )
+
+          # ============================================================
+          # Real PS5 download size
+          #
+          # We do NOT use EA package/build sizes here.
+          # Until a verified PS5 package source is available,
+          # size remains unknown.
+          # ============================================================
+
+          update_size = "نامشخص"
+
+          # ============================================================
+          # State
+          # ============================================================
+
+          new_state = game_version
+
+          old_state = ""
+
+          if os.path.exists(STATE_FILE):
+              with open(
+                  STATE_FILE,
+                  "r",
+                  encoding="utf-8"
+              ) as f:
+                  old_state = f.read().strip()
+
+          # ============================================================
+          # Message
+          # ============================================================
+
+          message = f"""⚽ FC 27 LITE PS5
+
+Game Version: {game_version}
+PS5 Version: {ps5_version}
+Date: {release_date}
+Update Size: {update_size}"""
+
+          print("")
+          print("========================================")
+          print(message)
+          print("========================================")
+          print("")
+
+          # ============================================================
+          # Save latest information
+          # ============================================================
+
+          with open(
+              LATEST_FILE,
+              "w",
+              encoding="utf-8"
+          ) as f:
+              f.write(message)
+
+          # ============================================================
+          # FIRST RUN
+          #
+          # Save current version without notification.
+          # ============================================================
+
+          if not old_state:
+
+              print(
+                  "First run - saving current version."
+              )
+
+              with open(
+                  STATE_FILE,
+                  "w",
+                  encoding="utf-8"
+              ) as f:
+                  f.write(new_state)
+
+              subprocess.run(
+                  [
+                      "git",
+                      "config",
+                      "user.name",
+                      "github-actions[bot]"
+                  ],
+                  check=True
+              )
+
+              subprocess.run(
+                  [
+                      "git",
+                      "config",
+                      "user.email",
+                      "41898282+github-actions[bot]@users.noreply.github.com"
+                  ],
+                  check=True
+              )
+
+              subprocess.run(
+                  [
+                      "git",
+                      "add",
+                      STATE_FILE,
+                      LATEST_FILE
+                  ],
+                  check=True
+              )
+
+              result = subprocess.run(
+                  [
+                      "git",
+                      "diff",
+                      "--cached",
+                      "--quiet"
+                  ]
+              )
+
+              if result.returncode != 0:
+
+                  subprocess.run(
+                      [
+                          "git",
+                          "commit",
+                          "-m",
+                          "Initialize FC 27 tracker"
+                      ],
+                      check=True
+                  )
+
+                  subprocess.run(
+                      ["git", "push"],
+                      check=True
+                  )
+
+              print(
+                  "FC 27 tracker initialized."
+              )
+
+              raise SystemExit(0)
+
+          # ============================================================
+          # NO NEW UPDATE
+          # ============================================================
+
+          if old_state == new_state:
+
+              print(
+                  "No new FC 27 update."
+              )
+
+              subprocess.run(
+                  [
+                      "git",
+                      "config",
+                      "user.name",
+                      "github-actions[bot]"
+                  ],
+                  check=True
+              )
+
+              subprocess.run(
+                  [
+                      "git",
+                      "config",
+                      "user.email",
+                      "41898282+github-actions[bot]@users.noreply.github.com"
+                  ],
+                  check=True
+              )
+
+              subprocess.run(
+                  [
+                      "git",
+                      "add",
+                      LATEST_FILE
+                  ],
+                  check=True
+              )
+
+              result = subprocess.run(
+                  [
+                      "git",
+                      "diff",
+                      "--cached",
+                      "--quiet"
+                  ]
+              )
+
+              if result.returncode != 0:
+
+                  subprocess.run(
+                      [
+                          "git",
+                          "commit",
+                          "-m",
+                          "Update FC 27 latest info"
+                      ],
+                      check=True
+                  )
+
+                  subprocess.run(
+                      ["git", "push"],
+                      check=True
+                  )
+
+              raise SystemExit(0)
+
+          # ============================================================
+          # NEW UPDATE DETECTED
+          # ============================================================
+
+          print("")
+          print(
+              "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+          )
+          print(
+              "NEW FC 27 UPDATE DETECTED"
+          )
+          print(
+              "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+          )
+          print("")
+
+          bot_token = os.environ.get(
+              "BOT_TOKEN"
+          )
+
+          chat_id = os.environ.get(
+              "CHAT_ID"
+          )
+
+          if not bot_token:
+              print(
+                  "BOT_TOKEN secret is missing."
+              )
+              raise SystemExit(1)
+
+          if not chat_id:
+              print(
+                  "CHAT_ID secret is missing."
+              )
+              raise SystemExit(1)
+
+          telegram_url = (
+              "https://api.telegram.org/bot"
+              + bot_token
+              + "/sendMessage"
+          )
+
+          data = urllib.parse.urlencode(
+              {
+                  "chat_id": chat_id,
+                  "text": message
+              }
+          ).encode()
+
+          telegram_request = urllib.request.Request(
+              telegram_url,
+              data=data,
+              method="POST",
+              headers={
+                  "Content-Type":
+                  "application/x-www-form-urlencoded"
+              }
+          )
+
+          # ============================================================
+          # Send notification
+          #
+          # State is saved ONLY after successful Telegram response.
+          # If Telegram fails, next run retries.
+          # ============================================================
+
+          try:
+
+              with urllib.request.urlopen(
+                  telegram_request,
+                  timeout=30
+              ) as response:
+
+                  telegram_response = response.read().decode(
+                      "utf-8",
+                      errors="ignore"
+                  )
+
+              print(
+                  "Telegram response:",
+                  telegram_response
+              )
+
+              if '"ok":true' not in telegram_response:
+
+                  print(
+                      "Telegram did not confirm success."
+                  )
+
+                  raise SystemExit(1)
+
+          except Exception as e:
+
+              print(
+                  "Telegram notification FAILED:",
+                  e
+              )
+
+              print(
+                  "State was NOT updated."
+              )
+
+              raise SystemExit(1)
+
+          # ============================================================
+          # Telegram succeeded
+          # Save new state
+          # ============================================================
+
+          with open(
+              STATE_FILE,
+              "w",
+              encoding="utf-8"
+          ) as f:
+              f.write(new_state)
+
+          subprocess.run(
+              [
+                  "git",
+                  "config",
+                  "user.name",
+                  "github-actions[bot]"
+              ],
+              check=True
+          )
+
+          subprocess.run(
+              [
+                  "git",
+                  "config",
+                  "user.email",
+                  "41898282+github-actions[bot]@users.noreply.github.com"
+              ],
+              check=True
+          )
+
+          subprocess.run(
+              [
+                  "git",
+                  "add",
+                  STATE_FILE,
+                  LATEST_FILE
+              ],
+              check=True
+          )
+
+          result = subprocess.run(
+              [
+                  "git",
+                  "diff",
+                  "--cached",
+                  "--quiet"
+              ]
+          )
+
+          if result.returncode != 0:
+
+              subprocess.run(
+                  [
+                      "git",
+                      "commit",
+                      "-m",
+                      f"FC 27 update {game_version}"
+                  ],
+                  check=True
+              )
+
+              subprocess.run(
+                  ["git", "push"],
+                  check=True
+              )
+
+          print("")
+          print(
+              "FC 27 update notification sent successfully."
+          )
+          print(
+              f"Saved state: {new_state}"
+          )
+          print("")
+          PY
