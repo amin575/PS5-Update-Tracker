@@ -1,3 +1,2 @@
-Version: نامشخص
-Fortnite Version: 42.30
-Size: نامشخص
+Version: 01.000.228
+Size: 74.2 GB
