@@ -126,7 +126,7 @@ jobs:
               print("NEW FORTNITE UPDATE DETECTED")
 
               message = (
-                  "🎮 PS5 UPDATE\n\n"
+                  "🎮 Fortnite PS5 UPDATE\n\n"
                   "Fortnite\n\n"
                   "PS5 Version: " + ps5_version + "\n"
                   "Fortnite Version: " + game_version + "\n"
