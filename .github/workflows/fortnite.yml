@@ -127,7 +127,6 @@ jobs:
 
               message = (
                   "🎮 Fortnite PS5 UPDATE\n\n"
-                  "Fortnite\n\n"
                   "PS5 Version: " + ps5_version + "\n"
                   "Fortnite Version: " + game_version + "\n"
                   "Release Date: " + release_date + "\n"
