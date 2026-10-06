@@ -15,6 +15,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Check FC 27 update
         env:
@@ -27,6 +29,7 @@ jobs:
           import urllib.request
           import urllib.parse
           import subprocess
+          import time
 
           URL = "https://www.ea.com/games/ea-sports-fc/fc-27/news"
           STATE_FILE = "fc27_version.txt"
@@ -102,12 +105,12 @@ jobs:
               else "نامشخص"
           )
 
-          # Size
           # Real PS5 download size is not verified yet.
           update_size = "نامشخص"
 
-          # State
+          # New state
           new_state = game_version
+
           old_state = ""
 
           if os.path.exists(STATE_FILE):
@@ -131,7 +134,63 @@ jobs:
           print(message)
           print("")
 
-          # Save latest information
+          # Configure Git
+          subprocess.run(
+              [
+                  "git",
+                  "config",
+                  "user.name",
+                  "github-actions[bot]"
+              ],
+              check=True
+          )
+
+          subprocess.run(
+              [
+                  "git",
+                  "config",
+                  "user.email",
+                  "41898282+github-actions[bot]@users.noreply.github.com"
+              ],
+              check=True
+          )
+
+          # Get latest remote changes BEFORE making our changes.
+          # This prevents the common "fetch first" error.
+          print("Updating local repository from remote...")
+
+          subprocess.run(
+              [
+                  "git",
+                  "fetch",
+                  "origin",
+                  "main"
+              ],
+              check=True
+          )
+
+          subprocess.run(
+              [
+                  "git",
+                  "rebase",
+                  "origin/main"
+              ],
+              check=True
+          )
+
+          # Re-read state after rebase.
+          # Another workflow may have created/updated it.
+          old_state = ""
+
+          if os.path.exists(STATE_FILE):
+              with open(
+                  STATE_FILE,
+                  "r",
+                  encoding="utf-8"
+              ) as f:
+                  old_state = f.read().strip()
+
+          # Always update latest information.
           with open(
               LATEST_FILE,
               "w",
@@ -156,26 +215,6 @@ jobs:
               subprocess.run(
                   [
                       "git",
-                      "config",
-                      "user.name",
-                      "github-actions[bot]"
-                  ],
-                  check=True
-              )
-
-              subprocess.run(
-                  [
-                      "git",
-                      "config",
-                      "user.email",
-                      "41898282+github-actions[bot]@users.noreply.github.com"
-                  ],
-                  check=True
-              )
-
-              subprocess.run(
-                  [
-                      "git",
                       "add",
                       STATE_FILE,
                       LATEST_FILE
@@ -193,6 +232,7 @@ jobs:
               )
 
               if result.returncode != 0:
+
                   subprocess.run(
                       [
                           "git",
@@ -203,10 +243,53 @@ jobs:
                       check=True
                   )
 
-                  subprocess.run(
-                      ["git", "push"],
-                      check=True
-                  )
+                  # Try to push.
+                  # If another workflow pushed at the same time,
+                  # rebase and retry.
+                  for attempt in range(3):
+
+                      push = subprocess.run(
+                          [
+                              "git",
+                              "push",
+                              "origin",
+                              "main"
+                          ]
+                      )
+
+                      if push.returncode == 0:
+                          break
+
+                      print(
+                          f"Push failed. Retry {attempt + 1}/3..."
+                      )
+
+                      subprocess.run(
+                          [
+                              "git",
+                              "fetch",
+                              "origin",
+                              "main"
+                          ],
+                          check=True
+                      )
+
+                      subprocess.run(
+                          [
+                              "git",
+                              "rebase",
+                              "origin/main"
+                          ],
+                          check=True
+                      )
+
+                      time.sleep(2)
+
+                  else:
+                      print(
+                          "Could not push FC 27 changes."
+                      )
+                      raise SystemExit(1)
 
               raise SystemExit(0)
 
@@ -215,26 +298,6 @@ jobs:
 
               print(
                   "No new FC 27 update."
-              )
-
-              subprocess.run(
-                  [
-                      "git",
-                      "config",
-                      "user.name",
-                      "github-actions[bot]"
-                  ],
-                  check=True
-              )
-
-              subprocess.run(
-                  [
-                      "git",
-                      "config",
-                      "user.email",
-                      "41898282+github-actions[bot]@users.noreply.github.com"
-                  ],
-                  check=True
               )
 
               subprocess.run(
@@ -256,6 +319,7 @@ jobs:
               )
 
               if result.returncode != 0:
+
                   subprocess.run(
                       [
                           "git",
@@ -266,10 +330,50 @@ jobs:
                       check=True
                   )
 
-                  subprocess.run(
-                      ["git", "push"],
-                      check=True
-                  )
+                  for attempt in range(3):
+
+                      push = subprocess.run(
+                          [
+                              "git",
+                              "push",
+                              "origin",
+                              "main"
+                          ]
+                      )
+
+                      if push.returncode == 0:
+                          break
+
+                      print(
+                          f"Push failed. Retry {attempt + 1}/3..."
+                      )
+
+                      subprocess.run(
+                          [
+                              "git",
+                              "fetch",
+                              "origin",
+                              "main"
+                          ],
+                          check=True
+                      )
+
+                      subprocess.run(
+                          [
+                              "git",
+                              "rebase",
+                              "origin/main"
+                          ],
+                          check=True
+                      )
+
+                      time.sleep(2)
+
+                  else:
+                      print(
+                          "Could not push latest FC 27 information."
+                      )
+                      raise SystemExit(1)
 
               raise SystemExit(0)
 
@@ -323,59 +427,42 @@ jobs:
                   telegram_req,
                   timeout=30
               ) as response:
-                  result = response.read().decode(
+
+                  telegram_result = response.read().decode(
                       "utf-8",
                       errors="ignore"
                   )
 
               print(
                   "Telegram:",
-                  result
+                  telegram_result
               )
 
-              if '"ok":true' not in result:
+              if '"ok":true' not in telegram_result:
                   print(
                       "Telegram notification failed."
                   )
                   raise SystemExit(1)
 
           except Exception as e:
+
               print(
                   "Telegram error:",
                   e
               )
 
               # Do not save state.
-              # Next run will retry.
+              # Next run will retry the notification.
               raise SystemExit(1)
 
-          # Telegram succeeded
+          # Telegram succeeded.
+          # Only now save the new version.
           with open(
               STATE_FILE,
               "w",
               encoding="utf-8"
           ) as f:
               f.write(new_state)
-
-          subprocess.run(
-              [
-                  "git",
-                  "config",
-                  "user.name",
-                  "github-actions[bot]"
-              ],
-              check=True
-          )
-
-          subprocess.run(
-              [
-                  "git",
-                  "config",
-                  "user.email",
-                  "41898282+github-actions[bot]@users.noreply.github.com"
-              ],
-              check=True
-          )
 
           subprocess.run(
               [
@@ -397,6 +484,7 @@ jobs:
           )
 
           if result.returncode != 0:
+
               subprocess.run(
                   [
                       "git",
@@ -407,11 +495,52 @@ jobs:
                   check=True
               )
 
-              subprocess.run(
-                  ["git", "push"],
-                  check=True
-              )
+              for attempt in range(3):
+
+                  push = subprocess.run(
+                      [
+                          "git",
+                          "push",
+                          "origin",
+                          "main"
+                      ]
+                  )
+
+                  if push.returncode == 0:
+                      break
+
+                  print(
+                      f"Push failed. Retry {attempt + 1}/3..."
+                  )
+
+                  subprocess.run(
+                      [
+                          "git",
+                          "fetch",
+                          "origin",
+                          "main"
+                      ],
+                      check=True
+                  )
+
+                  subprocess.run(
+                      [
+                          "git",
+                          "rebase",
+                          "origin/main"
+                      ],
+                      check=True
+                  )
+
+                  time.sleep(2)
+
+              else:
+                  print(
+                      "Could not push FC 27 update."
+                  )
+                  raise SystemExit(1)
 
           print(
               "FC 27 notification sent successfully."
           )
+          PY
