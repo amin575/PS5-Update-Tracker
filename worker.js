@@ -99,7 +99,7 @@ async function getFile(filename) {
   });
 
   if (!response.ok) {
-    return "اطلاعات هنوز در GitHub ذخیره نشده.";
+    return "Information is not available on GitHub yet.";
   }
 
   return await response.text();
