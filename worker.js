@@ -29,13 +29,13 @@ export default {
       await sendTelegram(
         env.BOT_TOKEN,
         chatId,
-        "🎮 PS5 SYSTEM SOFTWARE\n\n" + ps5
+        "🟦 PS5 SYSTEM SOFTWARE\n\n" + ps5
       );
 
       await sendTelegram(
         env.BOT_TOKEN,
         chatId,
-        "🎮 WARZONE PS5\n\n" + warzone
+        "🪂 WARZONE PS5\n\n" + warzone
       );
 
       await sendTelegram(
@@ -47,7 +47,7 @@ export default {
       await sendTelegram(
         env.BOT_TOKEN,
         chatId,
-        "🎮 GTA VI PS5\n\n" + gtavi
+        "🔥 GTA VI PS5\n\n" + gtavi
       );
 
       await sendTelegram(
