@@ -25,6 +25,7 @@ jobs:
           import requests
           import xml.etree.ElementTree as ET
           import os
+          import re
           from pathlib import Path
 
           URL = "http://fus01.ps5.update.playstation.net/update/ps5/official/tJMRE80IbXnE9YuG0jzTXgKEjIMoabr6/list/us/updatelist.xml"
@@ -51,10 +52,33 @@ jobs:
           size = int(image.attrib["size"])
           size_gb = size / 1024 / 1024 / 1024
 
+          image_url = (image.text or "").strip()
+
+          date_match = re.search(
+              r"/image/(\d{4})_(\d{4})/",
+              image_url
+          )
+
+          if date_match:
+              year = date_match.group(1)
+              month_day = date_match.group(2)
+
+              release_date = (
+                  year
+                  + "-"
+                  + month_day[:2]
+                  + "-"
+                  + month_day[2:]
+              )
+          else:
+              release_date = "Unknown"
+
           print("Current version:", version)
+          print("Release date:", release_date)
           print("Update size:", f"{size_gb:.2f} GB")
 
           state_file = Path("ps5_system_version.txt")
+          latest_file = Path("ps5_latest.txt")
 
           old_version = ""
 
@@ -62,6 +86,18 @@ jobs:
               old_version = state_file.read_text().strip()
 
           print("Previous version:", old_version or "NONE")
+
+          latest_text = (
+              "🟦 PS5 SYSTEM SOFTWARE\n\n"
+              "Version: " + version + "\n"
+              "Release Date: " + release_date + "\n"
+              "Size: " + f"{size_gb:.2f}" + " GB\n"
+          )
+
+          latest_file.write_text(
+              latest_text,
+              encoding="utf-8"
+          )
 
           # First run: save current version without sending notification
           if not old_version:
@@ -78,10 +114,11 @@ jobs:
               CHAT_ID = os.environ["CHAT_ID"]
 
               message = (
-                  "🟦 PS5 SYSTEM SOFTWARE\n\n"
+                  "🟦 PS5 SYSTEM SOFTWARE UPDATE\n\n"
                   "Version: " + version + "\n"
+                  "Release Date: " + release_date + "\n"
                   "Size: " + f"{size_gb:.2f}" + " GB\n\n"
-                  "🆕 System Update جدید منتشر شد"
+                  "🆕 New system update released"
               )
 
               tg = requests.post(
@@ -101,6 +138,7 @@ jobs:
               state_file.write_text(version)
 
               print("New version saved.")
+              print("Notification sent.")
 
           # Same version
           else:
@@ -112,7 +150,7 @@ jobs:
           git config user.name "PS5 Update Tracker"
           git config user.email "actions@github.com"
 
-          git add ps5_system_version.txt
+          git add ps5_system_version.txt ps5_latest.txt
 
           if git diff --cached --quiet; then
             echo "No state changes."
