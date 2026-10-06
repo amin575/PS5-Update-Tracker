@@ -29,25 +29,25 @@ export default {
       await sendTelegram(
         env.BOT_TOKEN,
         chatId,
-        "🎮 PS5 SYSTEM SOFTWARE\n\n" + ps5
+        ps5
       );
 
       await sendTelegram(
         env.BOT_TOKEN,
         chatId,
-        "🎮 WARZONE PS5\n\n" + warzone
+        warzone
       );
 
       await sendTelegram(
         env.BOT_TOKEN,
         chatId,
-        "🎮 FORTNITE PS5\n\n" + fortnite
+        fortnite
       );
 
       await sendTelegram(
         env.BOT_TOKEN,
         chatId,
-        "🎮 GTA VI PS5\n\n" + gtavi
+        gtavi
       );
 
       await sendTelegram(
@@ -85,11 +85,16 @@ async function sendTelegram(token, chatId, text) {
 
 async function getFile(filename) {
   const url =
-    `https://raw.githubusercontent.com/amin575/PS5-Update-Tracker/main/${filename}`;
+    `https://raw.githubusercontent.com/amin575/PS5-Update-Tracker/main/${filename}?t=${Date.now()}`;
 
   const response = await fetch(url, {
     headers: {
-      "User-Agent": "PS5-Updates-Bot"
+      "User-Agent": "PS5-Updates-Bot",
+      "Cache-Control": "no-cache"
+    },
+    cf: {
+      cacheTtl: 0,
+      cacheEverything: false
     }
   });
 
