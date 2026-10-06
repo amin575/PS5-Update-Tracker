@@ -1,5 +1,3 @@
-🟦 PS5 SYSTEM SOFTWARE
-
 Version: 26.06-14.10.00.03-00.00.00.0.1
 Release Date: 2026-09-28
 Size: 1.17 GB
