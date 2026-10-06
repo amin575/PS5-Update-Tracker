@@ -88,7 +88,6 @@ jobs:
           print("Previous version:", old_version or "NONE")
 
           latest_text = (
-              "🟦 PS5 SYSTEM SOFTWARE\n\n"
               "Version: " + version + "\n"
               "Release Date: " + release_date + "\n"
               "Size: " + f"{size_gb:.2f}" + " GB\n"
