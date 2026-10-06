@@ -29,7 +29,6 @@ jobs:
           import re
           import subprocess
           import requests
-          from datetime import datetime, timezone
 
           BUILD_URL = "https://raw.githubusercontent.com/Fortnite-Datamining/Fortnite-Datamining/main/data/meta/build_info.json"
 
@@ -62,9 +61,6 @@ jobs:
 
           print("Fortnite version:", game_version)
 
-          # Known PS5 versions.
-          # Add new versions here only when a verified PS5
-          # version becomes available from a reliable source.
           known_ps5_versions = {
               "42.10": "01.000.231",
               "42.20": "01.000.232",
@@ -76,10 +72,6 @@ jobs:
               "نامشخص"
           )
 
-          # Release dates.
-          # The date is detected from the Fortnite build history
-          # when possible. Known verified dates are kept here
-          # as a fallback.
           known_release_dates = {
               "42.10": "2026-09-03",
               "42.20": "2026-09-17",
@@ -91,7 +83,6 @@ jobs:
               "نامشخص"
           )
 
-          # Real PS5 download size is intentionally not guessed.
           update_size = "نامشخص"
 
           state = game_version + "|" + ps5_version + "|" + release_date
@@ -126,7 +117,7 @@ jobs:
               print("NEW FORTNITE UPDATE DETECTED")
 
               message = (
-                  "🎮 Fortnite PS5 UPDATE\n\n"
+                  "🎮 FORTNITE PS5 UPDATE\n\n"
                   "PS5 Version: " + ps5_version + "\n"
                   "Fortnite Version: " + game_version + "\n"
                   "Release Date: " + release_date + "\n"
