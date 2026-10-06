@@ -53,7 +53,7 @@ export default {
       await sendTelegram(
         env.BOT_TOKEN,
         chatId,
-        "⚽ FC 27 LITE PS5\n\n" + fc27
+        fc27
       );
 
       return new Response("OK");
