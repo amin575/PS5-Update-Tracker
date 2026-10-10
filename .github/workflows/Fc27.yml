@@ -26,6 +26,8 @@ jobs:
           python3 - <<'PY'
           import os
           import re
+          import json
+          import html as html_module
           import urllib.request
           import urllib.parse
           import subprocess
@@ -39,37 +41,22 @@ jobs:
               "1.0.3": "01.000.006"
           }
 
-          # Get EA page
-          req = urllib.request.Request(
-              URL,
-              headers={
-                  "User-Agent": "Mozilla/5.0"
-              }
-          )
+          def get_page(url):
+              req = urllib.request.Request(
+                  url,
+                  headers={
+                      "User-Agent": "Mozilla/5.0"
+                  }
+              )
 
-          try:
               with urllib.request.urlopen(
                   req,
                   timeout=30
               ) as response:
-                  html = response.read().decode(
+                  return response.read().decode(
                       "utf-8",
                       errors="ignore"
                   )
-          except Exception as e:
-              print("EA request failed:", e)
-              raise SystemExit(1)
-
-          # Find Title Update versions
-          versions = re.findall(
-              r"Title\s+Update\s+v(\d+\.\d+\.\d+)",
-              html,
-              re.IGNORECASE
-          )
-
-          if not versions:
-              print("No FC 27 update found.")
-              raise SystemExit(1)
 
           def ver(v):
               return tuple(
@@ -77,38 +64,162 @@ jobs:
                   for x in v.split(".")
               )
 
+          def extract_date(article_html):
+              # Prefer structured article publication metadata.
+              patterns = [
+                  r'"datePublished"\s*:\s*"'
+                  r'(20\d{2}-\d{2}-\d{2})',
+
+                  r'"dateCreated"\s*:\s*"'
+                  r'(20\d{2}-\d{2}-\d{2})',
+
+                  r'<time[^>]+datetime=["\']'
+                  r'(20\d{2}-\d{2}-\d{2})'
+              ]
+
+              for pattern in patterns:
+                  match = re.search(
+                      pattern,
+                      article_html,
+                      re.IGNORECASE
+                  )
+
+                  if match:
+                      return match.group(1)
+
+              # Check JSON-LD metadata if present.
+              scripts = re.findall(
+                  r'<script[^>]+type=["\']application/ld\+json'
+                  r'["\'][^>]*>(.*?)</script>',
+                  article_html,
+                  re.IGNORECASE | re.DOTALL
+              )
+
+              for script in scripts:
+                  try:
+                      data = json.loads(
+                          html_module.unescape(script)
+                      )
+
+                      objects = (
+                          data if isinstance(data, list)
+                          else [data]
+                      )
+
+                      for obj in objects:
+                          if not isinstance(obj, dict):
+                              continue
+
+                          date_value = (
+                              obj.get("datePublished")
+                              or obj.get("dateCreated")
+                          )
+
+                          if date_value:
+                              match = re.match(
+                                  r'(20\d{2}-\d{2}-\d{2})',
+                                  str(date_value)
+                              )
+
+                              if match:
+                                  return match.group(1)
+
+                  except (ValueError, TypeError):
+                      continue
+
+              return "نامشخص"
+
+          print("Getting EA news page...")
+
+          try:
+              page_html = get_page(URL)
+          except Exception as e:
+              print("EA request failed:", e)
+              raise SystemExit(1)
+
+          # Find versions explicitly labelled as Title Updates.
+          versions = re.findall(
+              r"Title\s+Update\s+v(\d+\.\d+\.\d+)",
+              page_html,
+              re.IGNORECASE
+          )
+
+          if not versions:
+              print("No FC 27 Title Update found.")
+              raise SystemExit(1)
+
           game_version = max(
               versions,
               key=ver
           )
 
-          print(
-              "Latest FC 27 version:",
-              game_version
-          )
+          print("Latest FC 27 version:", game_version)
 
-          # PS5 version
+          # PS5 version is shown only when explicitly mapped.
           ps5_version = PS5_VERSIONS.get(
               game_version,
               "نامشخص"
           )
 
-          # Date
-          dates = re.findall(
-              r"20\d{2}-\d{2}-\d{2}",
-              html
+          # Find the article for THIS version, not an arbitrary
+          # date from the general EA news page.
+          version_slug = game_version.replace(".", "-")
+
+          article_pattern = (
+              r'<a\b[^>]*href=["\']([^"\']*'
+              r'fc27-title-update-v'
+              + re.escape(version_slug)
+              + r'[^"\']*)["\']'
           )
 
-          release_date = (
-              dates[0]
-              if dates
-              else "نامشخص"
+          article_links = re.findall(
+              article_pattern,
+              page_html,
+              re.IGNORECASE
           )
 
-          # Real PS5 download size is not verified yet.
+          # Remove duplicate links while preserving order.
+          article_links = list(dict.fromkeys(article_links))
+
+          release_date = "نامشخص"
+
+          for article_link in article_links:
+              article_link = html_module.unescape(
+                  article_link
+              )
+
+              if article_link.startswith("//"):
+                  article_url = "https:" + article_link
+              elif article_link.startswith("/"):
+                  article_url = (
+                      "https://www.ea.com" + article_link
+                  )
+              elif article_link.startswith("https://"):
+                  article_url = article_link
+              else:
+                  continue
+
+              try:
+                  print("Checking matching article:", article_url)
+
+                  article_html = get_page(article_url)
+                  found_date = extract_date(article_html)
+
+                  if found_date != "نامشخص":
+                      release_date = found_date
+                      break
+
+              except Exception as e:
+                  print("Article request failed:", e)
+
+          # If the exact article date cannot be verified,
+          # keep it unknown instead of using an unrelated date.
+          print("Release date:", release_date)
+
+          # Actual PS5 download size is not verified.
           update_size = "نامشخص"
 
-          # New state
+          # Version alone controls new-update notifications.
           new_state = game_version
 
           old_state = ""
@@ -121,7 +232,6 @@ jobs:
               ) as f:
                   old_state = f.read().strip()
 
-          # Message
           message = (
               "⚽ FC 27 LITE PS5\n\n"
               f"Game Version: {game_version}\n"
@@ -134,7 +244,7 @@ jobs:
           print(message)
           print("")
 
-          # Configure Git
+          # Configure Git.
           subprocess.run(
               [
                   "git",
@@ -155,8 +265,7 @@ jobs:
               check=True
           )
 
-          # Get latest remote changes BEFORE making our changes.
-          # This prevents the common "fetch first" error.
+          # Synchronize before making changes.
           print("Updating local repository from remote...")
 
           subprocess.run(
@@ -178,8 +287,7 @@ jobs:
               check=True
           )
 
-          # Re-read state after rebase.
-          # Another workflow may have created/updated it.
+          # Re-read state after synchronization.
           old_state = ""
 
           if os.path.exists(STATE_FILE):
@@ -190,7 +298,7 @@ jobs:
               ) as f:
                   old_state = f.read().strip()
 
-          # Always update latest information.
+          # Always refresh the latest information file.
           with open(
               LATEST_FILE,
               "w",
@@ -198,27 +306,9 @@ jobs:
           ) as f:
               f.write(message)
 
-          # First run
-          if not old_state:
-
-              print(
-                  "First run - saving current version."
-              )
-
-              with open(
-                  STATE_FILE,
-                  "w",
-                  encoding="utf-8"
-              ) as f:
-                  f.write(new_state)
-
+          def save_and_push(files, commit_message):
               subprocess.run(
-                  [
-                      "git",
-                      "add",
-                      STATE_FILE,
-                      LATEST_FILE
-                  ],
+                  ["git", "add"] + files,
                   check=True
               )
 
@@ -231,272 +321,21 @@ jobs:
                   ]
               )
 
-              if result.returncode != 0:
-
-                  subprocess.run(
-                      [
-                          "git",
-                          "commit",
-                          "-m",
-                          "Initialize FC 27 tracker"
-                      ],
-                      check=True
-                  )
-
-                  # Try to push.
-                  # If another workflow pushed at the same time,
-                  # rebase and retry.
-                  for attempt in range(3):
-
-                      push = subprocess.run(
-                          [
-                              "git",
-                              "push",
-                              "origin",
-                              "main"
-                          ]
-                      )
-
-                      if push.returncode == 0:
-                          break
-
-                      print(
-                          f"Push failed. Retry {attempt + 1}/3..."
-                      )
-
-                      subprocess.run(
-                          [
-                              "git",
-                              "fetch",
-                              "origin",
-                              "main"
-                          ],
-                          check=True
-                      )
-
-                      subprocess.run(
-                          [
-                              "git",
-                              "rebase",
-                              "origin/main"
-                          ],
-                          check=True
-                      )
-
-                      time.sleep(2)
-
-                  else:
-                      print(
-                          "Could not push FC 27 changes."
-                      )
-                      raise SystemExit(1)
-
-              raise SystemExit(0)
-
-          # No new update
-          if old_state == new_state:
-
-              print(
-                  "No new FC 27 update."
-              )
-
-              subprocess.run(
-                  [
-                      "git",
-                      "add",
-                      LATEST_FILE
-                  ],
-                  check=True
-              )
-
-              result = subprocess.run(
-                  [
-                      "git",
-                      "diff",
-                      "--cached",
-                      "--quiet"
-                  ]
-              )
-
-              if result.returncode != 0:
-
-                  subprocess.run(
-                      [
-                          "git",
-                          "commit",
-                          "-m",
-                          "Update FC 27 latest info"
-                      ],
-                      check=True
-                  )
-
-                  for attempt in range(3):
-
-                      push = subprocess.run(
-                          [
-                              "git",
-                              "push",
-                              "origin",
-                              "main"
-                          ]
-                      )
-
-                      if push.returncode == 0:
-                          break
-
-                      print(
-                          f"Push failed. Retry {attempt + 1}/3..."
-                      )
-
-                      subprocess.run(
-                          [
-                              "git",
-                              "fetch",
-                              "origin",
-                              "main"
-                          ],
-                          check=True
-                      )
-
-                      subprocess.run(
-                          [
-                              "git",
-                              "rebase",
-                              "origin/main"
-                          ],
-                          check=True
-                      )
-
-                      time.sleep(2)
-
-                  else:
-                      print(
-                          "Could not push latest FC 27 information."
-                      )
-                      raise SystemExit(1)
-
-              raise SystemExit(0)
-
-          # New update detected
-          print(
-              "NEW FC 27 UPDATE DETECTED!"
-          )
-
-          bot_token = os.environ.get(
-              "BOT_TOKEN"
-          )
-
-          chat_id = os.environ.get(
-              "CHAT_ID"
-          )
-
-          if not bot_token:
-              print(
-                  "BOT_TOKEN secret is missing."
-              )
-              raise SystemExit(1)
-
-          if not chat_id:
-              print(
-                  "CHAT_ID secret is missing."
-              )
-              raise SystemExit(1)
-
-          telegram_url = (
-              "https://api.telegram.org/bot"
-              + bot_token
-              + "/sendMessage"
-          )
-
-          data = urllib.parse.urlencode(
-              {
-                  "chat_id": chat_id,
-                  "text": message
-              }
-          ).encode()
-
-          telegram_req = urllib.request.Request(
-              telegram_url,
-              data=data,
-              method="POST"
-          )
-
-          # Send notification
-          try:
-              with urllib.request.urlopen(
-                  telegram_req,
-                  timeout=30
-              ) as response:
-
-                  telegram_result = response.read().decode(
-                      "utf-8",
-                      errors="ignore"
-                  )
-
-              print(
-                  "Telegram:",
-                  telegram_result
-              )
-
-              if '"ok":true' not in telegram_result:
-                  print(
-                      "Telegram notification failed."
-                  )
-                  raise SystemExit(1)
-
-          except Exception as e:
-
-              print(
-                  "Telegram error:",
-                  e
-              )
-
-              # Do not save state.
-              # Next run will retry the notification.
-              raise SystemExit(1)
-
-          # Telegram succeeded.
-          # Only now save the new version.
-          with open(
-              STATE_FILE,
-              "w",
-              encoding="utf-8"
-          ) as f:
-              f.write(new_state)
-
-          subprocess.run(
-              [
-                  "git",
-                  "add",
-                  STATE_FILE,
-                  LATEST_FILE
-              ],
-              check=True
-          )
-
-          result = subprocess.run(
-              [
-                  "git",
-                  "diff",
-                  "--cached",
-                  "--quiet"
-              ]
-          )
-
-          if result.returncode != 0:
+              if result.returncode == 0:
+                  print("No file changes to commit.")
+                  return
 
               subprocess.run(
                   [
                       "git",
                       "commit",
                       "-m",
-                      "FC 27 update"
+                      commit_message
                   ],
                   check=True
               )
 
               for attempt in range(3):
-
                   push = subprocess.run(
                       [
                           "git",
@@ -507,7 +346,8 @@ jobs:
                   )
 
                   if push.returncode == 0:
-                      break
+                      print("Git push succeeded.")
+                      return
 
                   print(
                       f"Push failed. Retry {attempt + 1}/3..."
@@ -534,13 +374,109 @@ jobs:
 
                   time.sleep(2)
 
-              else:
-                  print(
-                      "Could not push FC 27 update."
-                  )
-                  raise SystemExit(1)
+              raise RuntimeError(
+                  "Could not push FC 27 changes after 3 attempts."
+              )
 
-          print(
-              "FC 27 notification sent successfully."
+          # First run: initialize state without notification.
+          if not old_state:
+              print("First run - saving current version.")
+
+              with open(
+                  STATE_FILE,
+                  "w",
+                  encoding="utf-8"
+              ) as f:
+                  f.write(new_state)
+
+              save_and_push(
+                  [STATE_FILE, LATEST_FILE],
+                  "Initialize FC 27 tracker"
+              )
+
+              raise SystemExit(0)
+
+          # No new version: refresh latest information only.
+          if old_state == new_state:
+              print("No new FC 27 update.")
+
+              save_and_push(
+                  [LATEST_FILE],
+                  "Update FC 27 latest info"
+              )
+
+              raise SystemExit(0)
+
+          # A new version was detected.
+          print("NEW FC 27 UPDATE DETECTED!")
+
+          bot_token = os.environ.get("BOT_TOKEN")
+          chat_id = os.environ.get("CHAT_ID")
+
+          if not bot_token:
+              print("BOT_TOKEN secret is missing.")
+              raise SystemExit(1)
+
+          if not chat_id:
+              print("CHAT_ID secret is missing.")
+              raise SystemExit(1)
+
+          telegram_url = (
+              "https://api.telegram.org/bot"
+              + bot_token
+              + "/sendMessage"
           )
+
+          data = urllib.parse.urlencode(
+              {
+                  "chat_id": chat_id,
+                  "text": message
+              }
+          ).encode()
+
+          telegram_req = urllib.request.Request(
+              telegram_url,
+              data=data,
+              method="POST"
+          )
+
+          # Send notification before saving the new state.
+          try:
+              with urllib.request.urlopen(
+                  telegram_req,
+                  timeout=30
+              ) as response:
+                  telegram_result = response.read().decode(
+                      "utf-8",
+                      errors="ignore"
+                  )
+
+              print("Telegram:", telegram_result)
+
+              result_json = json.loads(telegram_result)
+
+              if not result_json.get("ok"):
+                  raise RuntimeError(
+                      "Telegram rejected the notification."
+                  )
+
+          except Exception as e:
+              print("Telegram notification failed:", e)
+              print("State not saved; next run can retry.")
+              raise SystemExit(1)
+
+          # Notification succeeded: now save the new state.
+          with open(
+              STATE_FILE,
+              "w",
+              encoding="utf-8"
+          ) as f:
+              f.write(new_state)
+
+          save_and_push(
+              [STATE_FILE, LATEST_FILE],
+              "FC 27 update"
+          )
+
+          print("FC 27 notification sent successfully.")
           PY
