@@ -27,11 +27,11 @@ jobs:
           import os
           import re
           import json
-          import html as html_module
           import urllib.request
           import urllib.parse
           import subprocess
           import time
+          from datetime import datetime, timezone
 
           URL = "https://www.ea.com/games/ea-sports-fc/fc-27/news"
           STATE_FILE = "fc27_version.txt"
@@ -64,71 +64,6 @@ jobs:
                   for x in v.split(".")
               )
 
-          def extract_date(article_html):
-              # Prefer structured article publication metadata.
-              patterns = [
-                  r'"datePublished"\s*:\s*"'
-                  r'(20\d{2}-\d{2}-\d{2})',
-
-                  r'"dateCreated"\s*:\s*"'
-                  r'(20\d{2}-\d{2}-\d{2})',
-
-                  r'<time[^>]+datetime=["\']'
-                  r'(20\d{2}-\d{2}-\d{2})'
-              ]
-
-              for pattern in patterns:
-                  match = re.search(
-                      pattern,
-                      article_html,
-                      re.IGNORECASE
-                  )
-
-                  if match:
-                      return match.group(1)
-
-              # Check JSON-LD metadata if present.
-              scripts = re.findall(
-                  r'<script[^>]+type=["\']application/ld\+json'
-                  r'["\'][^>]*>(.*?)</script>',
-                  article_html,
-                  re.IGNORECASE | re.DOTALL
-              )
-
-              for script in scripts:
-                  try:
-                      data = json.loads(
-                          html_module.unescape(script)
-                      )
-
-                      objects = (
-                          data if isinstance(data, list)
-                          else [data]
-                      )
-
-                      for obj in objects:
-                          if not isinstance(obj, dict):
-                              continue
-
-                          date_value = (
-                              obj.get("datePublished")
-                              or obj.get("dateCreated")
-                          )
-
-                          if date_value:
-                              match = re.match(
-                                  r'(20\d{2}-\d{2}-\d{2})',
-                                  str(date_value)
-                              )
-
-                              if match:
-                                  return match.group(1)
-
-                  except (ValueError, TypeError):
-                      continue
-
-              return "نامشخص"
-
           print("Getting EA news page...")
 
           try:
@@ -137,7 +72,7 @@ jobs:
               print("EA request failed:", e)
               raise SystemExit(1)
 
-          # Find versions explicitly labelled as Title Updates.
+          # Find Title Update versions.
           versions = re.findall(
               r"Title\s+Update\s+v(\d+\.\d+\.\d+)",
               page_html,
@@ -155,73 +90,25 @@ jobs:
 
           print("Latest FC 27 version:", game_version)
 
-          # PS5 version is shown only when explicitly mapped.
+          # PS5 version, when known.
           ps5_version = PS5_VERSIONS.get(
               game_version,
               "نامشخص"
           )
 
-          # Find the article for THIS version, not an arbitrary
-          # date from the general EA news page.
-          version_slug = game_version.replace(".", "-")
+          # This is the date the workflow runs, not the official
+          # publication date of the game update.
+          notification_date = datetime.now(
+              timezone.utc
+          ).strftime("%Y-%m-%d")
 
-          article_pattern = (
-              r'<a\b[^>]*href=["\']([^"\']*'
-              r'fc27-title-update-v'
-              + re.escape(version_slug)
-              + r'[^"\']*)["\']'
-          )
-
-          article_links = re.findall(
-              article_pattern,
-              page_html,
-              re.IGNORECASE
-          )
-
-          # Remove duplicate links while preserving order.
-          article_links = list(dict.fromkeys(article_links))
-
-          release_date = "نامشخص"
-
-          for article_link in article_links:
-              article_link = html_module.unescape(
-                  article_link
-              )
-
-              if article_link.startswith("//"):
-                  article_url = "https:" + article_link
-              elif article_link.startswith("/"):
-                  article_url = (
-                      "https://www.ea.com" + article_link
-                  )
-              elif article_link.startswith("https://"):
-                  article_url = article_link
-              else:
-                  continue
-
-              try:
-                  print("Checking matching article:", article_url)
-
-                  article_html = get_page(article_url)
-                  found_date = extract_date(article_html)
-
-                  if found_date != "نامشخص":
-                      release_date = found_date
-                      break
-
-              except Exception as e:
-                  print("Article request failed:", e)
-
-          # If the exact article date cannot be verified,
-          # keep it unknown instead of using an unrelated date.
-          print("Release date:", release_date)
+          print("Workflow date (UTC):", notification_date)
 
           # Actual PS5 download size is not verified.
           update_size = "نامشخص"
 
-          # Version alone controls new-update notifications.
+          # Only a version change triggers a notification.
           new_state = game_version
-
           old_state = ""
 
           if os.path.exists(STATE_FILE):
@@ -236,7 +123,7 @@ jobs:
               "⚽ FC 27 LITE PS5\n\n"
               f"Game Version: {game_version}\n"
               f"PS5 Version: {ps5_version}\n"
-              f"Date: {release_date}\n"
+              f"Date: {notification_date}\n"
               f"Update Size: {update_size}"
           )
 
@@ -265,7 +152,7 @@ jobs:
               check=True
           )
 
-          # Synchronize before making changes.
+          # Synchronize with the remote repository.
           print("Updating local repository from remote...")
 
           subprocess.run(
@@ -396,7 +283,7 @@ jobs:
 
               raise SystemExit(0)
 
-          # No new version: refresh latest information only.
+          # No new version: update latest information only.
           if old_state == new_state:
               print("No new FC 27 update.")
 
@@ -407,7 +294,7 @@ jobs:
 
               raise SystemExit(0)
 
-          # A new version was detected.
+          # New version detected: send automatic notification.
           print("NEW FC 27 UPDATE DETECTED!")
 
           bot_token = os.environ.get("BOT_TOKEN")
@@ -465,7 +352,7 @@ jobs:
               print("State not saved; next run can retry.")
               raise SystemExit(1)
 
-          # Notification succeeded: now save the new state.
+          # Save the new version only after Telegram succeeds.
           with open(
               STATE_FILE,
               "w",
