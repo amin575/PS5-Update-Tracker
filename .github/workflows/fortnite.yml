@@ -22,6 +22,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests playwright
+          playwright install --with-deps chromium
+
       - name: Check Fortnite update
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
@@ -36,8 +47,13 @@ jobs:
           import subprocess
           import requests
 
-          from datetime import datetime, timezone
+          from datetime import datetime
           from zoneinfo import ZoneInfo
+          from playwright.sync_api import sync_playwright
+
+          # ==========================================
+          # Configuration
+          # ==========================================
 
           BUILD_URL = (
               "https://raw.githubusercontent.com/"
@@ -47,14 +63,7 @@ jobs:
 
           BASE = "https://prosperopatches.com"
           TITLE_ID = "PPSA01922"
-          PAGE = BASE + "/" + TITLE_ID
-          API = BASE + "/api/internal/loadpatches"
-
-          # Same request key and request format as the working Warzone tracker.
-          KEY = (
-              "db36a93c8bdfcc99c6c0170671c3b49d"
-              "75a9873eb3c634fde0ab26392353a299"
-          )
+          PATCH_PAGE = f"{BASE}/{TITLE_ID}"
 
           STATE_FILE = "fortnite_version.txt"
           LATEST_FILE = "fortnite_latest.txt"
@@ -64,12 +73,32 @@ jobs:
           CHAT_ID = os.environ.get("CHAT_ID", "")
 
           HEADERS = {
-              "User-Agent": "Mozilla/5.0",
+              "User-Agent": (
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/130.0.0.0 Safari/537.36"
+              ),
               "Accept": "application/json, text/plain, */*"
           }
 
           session = requests.Session()
           session.headers.update(HEADERS)
+
+          VERSION_PATTERN = re.compile(
+              r"(?<!\d)0?1\.\d{3}\.\d{1,4}(?!\d)"
+          )
+
+          SIZE_PATTERN = re.compile(
+              r"(?<![\w.])"
+              r"(\d+(?:[.,]\d+)?)\s*"
+              r"(GB|MB|TB|GiB|MiB|TiB)"
+              r"(?!\w)",
+              re.IGNORECASE
+          )
+
+          # ==========================================
+          # File helpers
+          # ==========================================
 
           def read_file(filename):
               if not os.path.exists(filename):
@@ -82,91 +111,44 @@ jobs:
               with open(filename, "w", encoding="utf-8") as f:
                   f.write(content)
 
+          # ==========================================
+          # Version helpers
+          # ==========================================
+
           def version_key(value):
               numbers = re.findall(r"\d+", str(value or ""))
-              return tuple(int(n) for n in numbers) if numbers else (0,)
+
+              if not numbers:
+                  return (0,)
+
+              return tuple(int(n) for n in numbers)
+
+          def normalize_version(value):
+              numbers = re.findall(r"\d+", str(value or ""))
+
+              if not numbers:
+                  return ""
+
+              return ".".join(str(int(n)) for n in numbers)
 
           def is_newer(candidate, previous):
               return version_key(candidate) > version_key(previous)
 
-          def parse_date(value):
-              if not value:
-                  return datetime.min.replace(tzinfo=timezone.utc)
+          def get_tehran_time():
+              return datetime.now(ZoneInfo("Asia/Tehran"))
 
-              value = str(value).strip()
-
-              try:
-                  dt = datetime.fromisoformat(
-                      value.replace("Z", "+00:00")
-                  )
-
-                  if dt.tzinfo is None:
-                      dt = dt.replace(tzinfo=timezone.utc)
-
-                  return dt.astimezone(timezone.utc)
-
-              except (ValueError, TypeError):
-                  pass
-
-              for fmt in (
-                  "%Y-%m-%d %H:%M:%S",
-                  "%Y-%m-%d %H:%M",
-                  "%Y-%m-%d"
-              ):
-                  try:
-                      return datetime.strptime(
-                          value, fmt
-                      ).replace(tzinfo=timezone.utc)
-                  except ValueError:
-                      continue
-
-              return datetime.min.replace(tzinfo=timezone.utc)
-
-          def normalize_size(value):
-              if value is None or value == "":
-                  return "نامشخص"
-
-              if isinstance(value, str):
-                  value = value.strip()
-
-                  if not value:
-                      return "نامشخص"
-
-                  # If the API already includes a unit, preserve it.
-                  if re.search(
-                      r"\b(GB|MB|KB|TB|GiB|MiB)\b",
-                      value,
-                      re.IGNORECASE
-                  ):
-                      return value
-
-                  # Continue parsing numeric strings below.
-                  try:
-                      number = float(value.replace(",", ""))
-                  except ValueError:
-                      return value
-
-              else:
-                  try:
-                      number = float(value)
-                  except (TypeError, ValueError):
-                      return str(value)
-
-              # Large numeric values are assumed to be bytes.
-              if number >= 1_000_000_000:
-                  return f"{number / 1_000_000_000:.2f} GB"
-
-              # Smaller numeric values from this source are commonly
-              # expressed in GB; retain the value without false precision.
-              if number > 0:
-                  return f"{number:g} GB"
-
-              return "نامشخص"
+          # ==========================================
+          # Fortnite game version
+          # ==========================================
 
           def get_game_version():
               print("Fetching Fortnite build information...")
 
-              response = session.get(BUILD_URL, timeout=30)
+              response = session.get(
+                  BUILD_URL,
+                  timeout=30
+              )
+
               response.raise_for_status()
 
               data = response.json()
@@ -179,7 +161,8 @@ jobs:
 
               if not match:
                   raise RuntimeError(
-                      "Could not identify Fortnite version: " + build
+                      "Could not identify Fortnite version. "
+                      f"Build value: {build}"
                   )
 
               version = match.group(1)
@@ -188,90 +171,269 @@ jobs:
 
               return version
 
-          def get_ps5_patches():
-              print("Opening ProsperoPatches:", PAGE)
+          # ==========================================
+          # ProsperoPatches browser scraper
+          # ==========================================
 
-              page_response = session.get(PAGE, timeout=30)
+          def get_ps5_patch():
+              print("Opening ProsperoPatches with Chromium...")
+              print("Patch page:", PATCH_PAGE)
 
-              print("Page HTTP:", page_response.status_code)
-              page_response.raise_for_status()
-
-              payload = {
-                  "titleid": TITLE_ID,
-                  "key": KEY
-              }
-
-              # Keep the exact request format used by the working
-              # Warzone workflow.
-              response = session.post(
-                  API,
-                  data=json.dumps(payload),
-                  timeout=30,
-                  headers={
-                      "User-Agent": "Mozilla/5.0",
-                      "Content-Type": (
-                          "application/x-www-form-urlencoded; charset=UTF-8"
-                      ),
-                      "Accept": "application/json",
-                      "Referer": PAGE,
-                      "Origin": BASE,
-                      "X-Requested-With": "XMLHttpRequest"
-                  }
-              )
-
-              print("API HTTP:", response.status_code)
-              response.raise_for_status()
-
-              try:
-                  data = response.json()
-              except ValueError:
-                  print(response.text[:1500])
-                  raise RuntimeError(
-                      "ProsperoPatches returned invalid JSON."
+              with sync_playwright() as p:
+                  browser = p.chromium.launch(
+                      headless=True,
+                      args=["--no-sandbox"]
                   )
 
-              if not isinstance(data, dict):
-                  raise RuntimeError(
-                      "Unexpected ProsperoPatches response."
+                  page = browser.new_page(
+                      user_agent=HEADERS["User-Agent"],
+                      viewport={
+                          "width": 1440,
+                          "height": 1000
+                      }
                   )
 
-              if not data.get("success"):
-                  print("API response:", data)
-                  raise RuntimeError(
-                      "ProsperoPatches rejected the request: "
-                      + str(data.get("message", "Unknown error"))
-                  )
+                  try:
+                      response = page.goto(
+                          PATCH_PAGE,
+                          wait_until="domcontentloaded",
+                          timeout=60000
+                      )
 
-              patches = data.get("patches", [])
+                      if response:
+                          print(
+                              "ProsperoPatches HTTP:",
+                              response.status
+                          )
 
-              if not isinstance(patches, list) or not patches:
-                  print("API response:", data)
-                  raise RuntimeError(
-                      "No Fortnite PS5 patches were returned."
-                  )
+                          if response.status >= 400:
+                              raise RuntimeError(
+                                  "ProsperoPatches page returned HTTP "
+                                  + str(response.status)
+                              )
 
-              valid = [
-                  patch for patch in patches
-                  if isinstance(patch, dict)
-                  and str(patch.get("content_ver") or "").strip()
-              ]
+                      # Allow the website's JavaScript to load
+                      # and render its patch information.
+                      try:
+                          page.wait_for_load_state(
+                              "networkidle",
+                              timeout=15000
+                          )
+                      except Exception:
+                          pass
 
-              if not valid:
-                  raise RuntimeError(
-                      "No patches with a valid content_ver were returned."
-                  )
+                      page.wait_for_timeout(7000)
 
-              valid.sort(
-                  key=lambda patch: (
-                      parse_date(patch.get("import_date")),
-                      version_key(patch.get("content_ver"))
-                  ),
-                  reverse=True
-              )
+                      # Collect the smallest DOM elements containing
+                      # both a PS5 version and a size. This helps avoid
+                      # pairing one patch's version with another
+                      # patch's file size.
+                      rows = page.evaluate("""
+                      () => {
+                        const versionRe =
+                          /(?<!\\\\d)0?1\\\\.\\\\d{3}\\\\.\\\\d{1,4}(?!\\\\d)/;
 
-              print("Patches received:", len(valid))
+                        const sizeRe =
+                          /(?<![\\\\w.])\\\\d+(?:[.,]\\\\d+)?\\\\s*(?:GB|MB|TB|GiB|MiB|TiB)(?!\\\\w)/i;
 
-              return valid
+                        const elements = Array.from(
+                          document.querySelectorAll(
+                            'tr, [role="row"], li, article, section, div'
+                          )
+                        );
+
+                        const results = [];
+
+                        for (const element of elements) {
+                          const text = (
+                            element.innerText || ""
+                          ).replace(/\\\\s+/g, " ").trim();
+
+                          if (!text || text.length > 1200) {
+                            continue;
+                          }
+
+                          if (
+                            versionRe.test(text) &&
+                            sizeRe.test(text)
+                          ) {
+                            results.push(text);
+                          }
+                        }
+
+                        return results.sort(
+                          (a, b) => a.length - b.length
+                        );
+                      }
+                      """)
+
+                      # Remove duplicate rows while preserving order.
+                      unique_rows = []
+                      seen_rows = set()
+
+                      for row in rows:
+                          row = re.sub(r"\s+", " ", row).strip()
+
+                          if row and row not in seen_rows:
+                              unique_rows.append(row)
+                              seen_rows.add(row)
+
+                      patches = []
+                      seen_versions = set()
+
+                      for row in unique_rows:
+                          versions = VERSION_PATTERN.findall(row)
+                          sizes = SIZE_PATTERN.findall(row)
+
+                          if not versions or not sizes:
+                              continue
+
+                          # Normally a patch row contains one version
+                          # and one size. If a row contains multiple
+                          # versions, do not guess which size belongs
+                          # to which version.
+                          if len(set(versions)) != 1:
+                              continue
+
+                          if len(sizes) != 1:
+                              continue
+
+                          version = versions[0]
+                          number, unit = sizes[0]
+
+                          size = (
+                              number.replace(",", ".")
+                              + " "
+                              + unit.upper()
+                          )
+
+                          normalized = normalize_version(version)
+
+                          if normalized in seen_versions:
+                              continue
+
+                          seen_versions.add(normalized)
+
+                          patches.append({
+                              "version": version,
+                              "size": size,
+                              "row": row
+                          })
+
+                      # Fallback: inspect the full rendered text.
+                      # Only use a version if exactly one size occurs
+                      # in its surrounding patch block.
+                      if not patches:
+                          body_text = page.locator(
+                              "body"
+                          ).inner_text()
+
+                          body_text = re.sub(
+                              r"[ \t]+",
+                              " ",
+                              body_text
+                          )
+
+                          matches = list(
+                              VERSION_PATTERN.finditer(body_text)
+                          )
+
+                          for index, match in enumerate(matches):
+                              start = max(0, match.start() - 250)
+
+                              if index + 1 < len(matches):
+                                  end = min(
+                                      len(body_text),
+                                      matches[index + 1].start()
+                                  )
+                              else:
+                                  end = min(
+                                      len(body_text),
+                                      match.end() + 250
+                                  )
+
+                              block = body_text[start:end]
+                              sizes = SIZE_PATTERN.findall(block)
+
+                              if len(sizes) != 1:
+                                  continue
+
+                              version = match.group(0)
+                              number, unit = sizes[0]
+
+                              normalized = normalize_version(version)
+
+                              if normalized in seen_versions:
+                                  continue
+
+                              seen_versions.add(normalized)
+
+                              patches.append({
+                                  "version": version,
+                                  "size": (
+                                      number.replace(",", ".")
+                                      + " "
+                                      + unit.upper()
+                                  ),
+                                  "row": block
+                              })
+
+                      if not patches:
+                          preview = page.locator(
+                              "body"
+                          ).inner_text()[:3000]
+
+                          print(
+                              "Rendered page text preview:",
+                              preview
+                          )
+
+                          raise RuntimeError(
+                              "Could not safely extract a matching "
+                              "PS5 patch version and size from "
+                              "ProsperoPatches. State was not changed."
+                          )
+
+                      patches.sort(
+                          key=lambda item: version_key(
+                              item["version"]
+                          ),
+                          reverse=True
+                      )
+
+                      print(
+                          "PS5 patch entries extracted:",
+                          len(patches)
+                      )
+
+                      for patch in patches[:5]:
+                          print(
+                              "Patch candidate:",
+                              patch["version"],
+                              "|",
+                              patch["size"]
+                          )
+
+                      latest = patches[0]
+
+                      print(
+                          "Latest ProsperoPatches PS5 version:",
+                          latest["version"]
+                      )
+
+                      print(
+                          "Latest ProsperoPatches patch size:",
+                          latest["size"]
+                      )
+
+                      return latest
+
+                  finally:
+                      browser.close()
+
+          # ==========================================
+          # State handling
+          # ==========================================
 
           def load_state():
               raw = read_file(STATE_FILE)
@@ -279,7 +441,6 @@ jobs:
               if not raw:
                   return None
 
-              # New JSON format.
               try:
                   state = json.loads(raw)
 
@@ -289,8 +450,9 @@ jobs:
               except json.JSONDecodeError:
                   pass
 
-              # Compatibility with the previous format:
+              # Legacy format:
               # game_version|ps5_version
+
               parts = raw.split("|")
 
               if len(parts) >= 2:
@@ -298,19 +460,25 @@ jobs:
                       "game_version": parts[0].strip(),
                       "ps5_version": parts[1].strip(),
                       "patch_date": "",
-                      "size": ""
+                      "size": "",
+                      "notification_date": ""
                   }
 
-              # Compatibility with a version-only state file.
+              # Legacy version-only format.
+
               if re.fullmatch(r"\d+(?:\.\d+)+", raw):
                   return {
                       "game_version": "",
                       "ps5_version": raw,
                       "patch_date": "",
-                      "size": ""
+                      "size": "",
+                      "notification_date": ""
                   }
 
-              return None
+              raise RuntimeError(
+                  "Unrecognized Fortnite state-file format. "
+                  "No state was changed."
+              )
 
           def save_state(state):
               write_file(
@@ -322,55 +490,82 @@ jobs:
                   )
               )
 
+          # ==========================================
+          # Telegram
+          # ==========================================
+
+          def send_telegram(message):
+              if not BOT_TOKEN or not CHAT_ID:
+                  raise RuntimeError(
+                      "BOT_TOKEN or CHAT_ID secret is missing."
+                  )
+
+              url = (
+                  "https://api.telegram.org/bot"
+                  + BOT_TOKEN
+                  + "/sendMessage"
+              )
+
+              response = requests.post(
+                  url,
+                  json={
+                      "chat_id": CHAT_ID,
+                      "text": message
+                  },
+                  timeout=30
+              )
+
+              print("Telegram HTTP:", response.status_code)
+
+              response.raise_for_status()
+
+              result = response.json()
+
+              if not result.get("ok"):
+                  raise RuntimeError(
+                      "Telegram rejected the message: "
+                      + str(result)
+                  )
+
+              print("Telegram notification sent successfully.")
+
+          # ==========================================
+          # Latest info file
+          # ==========================================
+
           def make_latest(
               game_version,
               ps5_version,
-              patch_date,
-              notification_date,
               size,
-              firmware
+              notification_date,
+              checked_at
           ):
               return (
                   "🎮 FORTNITE PS5\n\n"
                   f"Fortnite Version: {game_version}\n"
                   f"PS5 Version: {ps5_version}\n"
-                  f"Patch Added: {patch_date or 'نامشخص'}\n"
-                  f"Last Notification Date: {notification_date}\n"
                   f"Update Size: {size}\n"
-                  f"Required Firmware: {firmware}\n"
+                  f"Last Notification Date: {notification_date}\n"
+                  f"Last Checked: {checked_at}\n"
+                  "Source: ProsperoPatches\n"
               )
+
+          # ==========================================
+          # Main
+          # ==========================================
 
           print("Fortnite tracker started.")
 
-          # 1. Current Fortnite game version.
           game_version = get_game_version()
+          patch = get_ps5_patch()
 
-          # 2. Current PS5 patch information.
-          patches = get_ps5_patches()
-          latest_patch = patches[0]
+          source_version = patch["version"]
+          source_size = patch["size"]
 
-          source_version = str(
-              latest_patch.get("content_ver") or ""
-          ).strip()
-
-          source_date = str(
-              latest_patch.get("import_date") or ""
-          ).strip()
-
-          source_size_raw = latest_patch.get("filesize")
-          source_size = normalize_size(source_size_raw)
-
-          source_firmware = str(
-              latest_patch.get("required_firmware") or "نامشخص"
-          ).strip()
-
-          print("Latest API patch version:", source_version)
-          print("API patch date:", source_date or "Unknown")
-          print("API patch size:", source_size)
-          print("Required firmware:", source_firmware)
-
-          # 3. Previous state.
           old_state = load_state()
+
+          old_game_version = ""
+          old_ps5_version = ""
 
           if old_state:
               old_game_version = str(
@@ -380,12 +575,20 @@ jobs:
               old_ps5_version = str(
                   old_state.get("ps5_version") or ""
               ).strip()
-          else:
-              old_game_version = ""
-              old_ps5_version = ""
 
-          print("Previous game version:", old_game_version or "None")
-          print("Previous PS5 version:", old_ps5_version or "None")
+          print(
+              "Previous game version:",
+              old_game_version or "None"
+          )
+
+          print(
+              "Previous PS5 version:",
+              old_ps5_version or "None"
+          )
+
+          now = get_tehran_time()
+          checked_at = now.strftime("%Y-%m-%d %H:%M:%S")
+          today = now.strftime("%Y-%m-%d")
 
           notification_date = read_file(DATE_FILE)
 
@@ -397,43 +600,19 @@ jobs:
           if not notification_date:
               notification_date = "هنوز اعلانی ارسال نشده"
 
-          now_tehran = datetime.now(ZoneInfo("Asia/Tehran"))
-          today = now_tehran.strftime("%Y-%m-%d")
+          # ------------------------------------------
+          # First run: save baseline, don't notify
+          # ------------------------------------------
 
-          # 4. Protect against a temporary source regression.
-          if (
-              old_ps5_version
-              and version_key(source_version)
-                  < version_key(old_ps5_version)
-          ):
-              print(
-                  "WARNING: API returned an older patch. "
-                  "Keeping the previously saved version."
-              )
-
-              selected_version = old_ps5_version
-              selected_size = "نامشخص"
-              selected_date = ""
-              selected_firmware = "نامشخص"
-
-          else:
-              selected_version = source_version
-              selected_size = source_size
-              selected_date = source_date
-              selected_firmware = source_firmware
-
-          print("Selected PS5 version:", selected_version)
-          print("Selected size:", selected_size)
-
-          # 5. First run establishes a baseline without a false alert.
           if not old_state:
-              print("First run: saving baseline without notification.")
+              print(
+                  "First run: saving baseline without notification."
+              )
 
               state = {
                   "game_version": game_version,
-                  "ps5_version": selected_version,
-                  "patch_date": selected_date,
-                  "size": source_size_raw,
+                  "ps5_version": source_version,
+                  "size": source_size,
                   "notification_date": ""
               }
 
@@ -443,16 +622,40 @@ jobs:
                   LATEST_FILE,
                   make_latest(
                       game_version,
-                      selected_version,
-                      selected_date,
+                      source_version,
+                      source_size,
                       notification_date,
-                      selected_size,
-                      selected_firmware
+                      checked_at
                   )
               )
 
           else:
-              # Notify only when the PS5 patch version is newer.
+              source_is_older = (
+                  bool(old_ps5_version)
+                  and version_key(source_version)
+                      < version_key(old_ps5_version)
+              )
+
+              if source_is_older:
+                  print(
+                      "WARNING: ProsperoPatches returned an older "
+                      "version than the saved state."
+                  )
+
+                  print(
+                      "Keeping the saved version. "
+                      "No notification will be sent."
+                  )
+
+                  selected_version = old_ps5_version
+                  selected_size = str(
+                      old_state.get("size") or "نامشخص"
+                  )
+
+              else:
+                  selected_version = source_version
+                  selected_size = source_size
+
               new_update = (
                   bool(old_ps5_version)
                   and is_newer(
@@ -461,59 +664,36 @@ jobs:
                   )
               )
 
-              print("New PS5 update detected:", new_update)
+              print(
+                  "Selected PS5 version:",
+                  selected_version
+              )
+
+              print(
+                  "Selected update size:",
+                  selected_size
+              )
+
+              print(
+                  "New PS5 update detected:",
+                  new_update
+              )
 
               if new_update:
-                  if not BOT_TOKEN or not CHAT_ID:
-                      raise RuntimeError(
-                          "BOT_TOKEN or CHAT_ID secret is missing."
-                      )
-
                   message = (
                       "🎮 FORTNITE PS5 UPDATE\n\n"
                       f"Fortnite Version: {game_version}\n"
                       f"PS5 Version: {selected_version}\n"
-                      f"Patch Added: {selected_date or 'نامشخص'}\n"
-                      f"Notification Date: {today}\n"
                       f"Update Size: {selected_size}\n"
-                      f"Required Firmware: {selected_firmware}\n\n"
+                      f"Notification Date: {today}\n"
+                      "Source: ProsperoPatches\n\n"
                       "🆕 آپدیت جدید PS5 شناسایی شد"
                   )
 
-                  telegram_url = (
-                      f"https://api.telegram.org/bot"
-                      f"{BOT_TOKEN}/sendMessage"
-                  )
-
-                  telegram_response = requests.post(
-                      telegram_url,
-                      json={
-                          "chat_id": CHAT_ID,
-                          "text": message
-                      },
-                      timeout=30
-                  )
-
-                  print(
-                      "Telegram HTTP:",
-                      telegram_response.status_code
-                  )
-
-                  telegram_response.raise_for_status()
-
-                  telegram_result = telegram_response.json()
-
-                  if not telegram_result.get("ok"):
-                      print(telegram_result)
-                      raise RuntimeError(
-                          "Telegram did not confirm the notification."
-                      )
+                  send_telegram(message)
 
                   notification_date = today
-
                   write_file(DATE_FILE, notification_date)
-
-                  print("Telegram notification sent successfully.")
 
               else:
                   print("No newer PS5 patch detected.")
@@ -521,12 +701,7 @@ jobs:
               state = {
                   "game_version": game_version,
                   "ps5_version": selected_version,
-                  "patch_date": selected_date,
-                  "size": (
-                      source_size_raw
-                      if selected_version == source_version
-                      else ""
-                  ),
+                  "size": selected_size,
                   "notification_date": (
                       ""
                       if notification_date == "هنوز اعلانی ارسال نشده"
@@ -541,14 +716,16 @@ jobs:
                   make_latest(
                       game_version,
                       selected_version,
-                      selected_date,
-                      notification_date,
                       selected_size,
-                      selected_firmware
+                      notification_date,
+                      checked_at
                   )
               )
 
-          # 6. Commit updated files to GitHub.
+          # ==========================================
+          # Commit and push
+          # ==========================================
+
           subprocess.run(
               [
                   "git", "config", "user.name",
@@ -579,7 +756,7 @@ jobs:
               ["git", "diff", "--cached", "--quiet"]
           )
 
-          if diff.returncode != 0:
+          if diff.returncode == 1:
               subprocess.run(
                   [
                       "git", "commit", "-m",
@@ -621,8 +798,13 @@ jobs:
                       "Git push failed after 3 attempts."
                   )
 
-          else:
+          elif diff.returncode == 0:
               print("No file changes to commit.")
+
+          else:
+              raise RuntimeError(
+                  "Could not inspect staged Git changes."
+              )
 
           print("Fortnite tracker finished.")
           PY
