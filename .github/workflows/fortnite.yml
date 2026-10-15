@@ -35,11 +35,10 @@ jobs:
           import json
           import time
           import subprocess
-          from datetime import datetime
-          from urllib.parse import quote_plus
-          from zoneinfo import ZoneInfo
-
           import requests
+
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
 
           BUILD_URL = (
               "https://raw.githubusercontent.com/"
@@ -57,25 +56,32 @@ jobs:
           CHAT_ID = os.environ.get("CHAT_ID", "")
 
           HEADERS = {
-              "User-Agent": "Mozilla/5.0 (compatible; PS5UpdateTracker/1.0)"
-          }
-
-          # Known game-version to PS5-version mappings.
-          # For newer versions, the script also searches online sources.
-          KNOWN_PS5_VERSIONS = {
-              "42.10": "01.000.231",
-              "42.20": "01.000.232",
-              "42.30": "01.000.233",
-          }
-
-          def get_page(url):
-              response = requests.get(
-                  url,
-                  headers=HEADERS,
-                  timeout=30
+              "User-Agent": (
+                  "Mozilla/5.0 "
+                  "(compatible; PS5UpdateTracker/1.0)"
               )
-              response.raise_for_status()
-              return response.text
+          }
+
+          session = requests.Session()
+          session.headers.update(HEADERS)
+
+          def read_file(filename):
+              if not os.path.exists(filename):
+                  return ""
+
+              with open(filename, "r", encoding="utf-8") as f:
+                  return f.read().strip()
+
+          def write_file(filename, content):
+              with open(filename, "w", encoding="utf-8") as f:
+                  f.write(content)
+
+          def version_key(version):
+              numbers = re.findall(r"\d+", str(version or ""))
+              return tuple(int(n) for n in numbers) if numbers else (0,)
+
+          def version_is_newer(candidate, previous):
+              return version_key(candidate) > version_key(previous)
 
           def clean_html(content):
               content = re.sub(
@@ -84,323 +90,309 @@ jobs:
                   content,
                   flags=re.IGNORECASE | re.DOTALL
               )
+
               content = re.sub(
                   r"<style\b[^>]*>.*?</style>",
                   " ",
                   content,
                   flags=re.IGNORECASE | re.DOTALL
               )
-              content = re.sub(r"<[^>]+>", " ", content)
-              return re.sub(r"\s+", " ", html.unescape(content))
 
-          def find_ps5_version(game_version):
-              # Try to discover the console patch for this exact game version.
-              search_url = (
-                  "https://mp1st.com/?s="
-                  + quote_plus("Fortnite Update " + game_version)
+              content = re.sub(r"<[^>]+>", " ", content)
+
+              return re.sub(
+                  r"\s+",
+                  " ",
+                  html.unescape(content)
+              ).strip()
+
+          def get_game_version():
+              print("Fetching Fortnite build information...")
+
+              response = session.get(BUILD_URL, timeout=30)
+              response.raise_for_status()
+
+              data = response.json()
+              build = str(data.get("build", "")).strip()
+
+              match = re.search(
+                  r"Release-([0-9]+(?:\.[0-9]+)+)",
+                  build
               )
 
-              try:
-                  page = clean_html(get_page(search_url))
-
-                  for match in re.finditer(
-                      re.escape(game_version),
-                      page,
-                      flags=re.IGNORECASE
-                  ):
-                      start = max(0, match.start() - 150)
-                      end = min(len(page), match.end() + 800)
-                      section = page[start:end]
-
-                      patch = re.search(
-                          r"1\.000\.\d{3}",
-                          section
-                      )
-
-                      if patch and "Fortnite" in section:
-                          print(
-                              "PS5 version found online:",
-                              patch.group(0)
-                          )
-                          return patch.group(0)
-
-              except Exception as error:
-                  print("Online PS5 version lookup failed:", error)
-
-              # Use a known mapping if the online lookup does not work.
-              fallback = KNOWN_PS5_VERSIONS.get(game_version)
-
-              if fallback:
-                  print("Using known PS5 version:", fallback)
-                  return fallback
-
-              return "نامشخص"
-
-          def find_update_size(ps5_version):
-              if ps5_version == "نامشخص":
-                  return "نامشخص"
-
-              try:
-                  page = clean_html(get_page(FRAMEPATCH_URL))
-
-                  # Use a size only when the source reports the exact
-                  # PS5 patch version currently being tracked.
-                  patches = re.findall(
-                      r"Patch\s+(01\.\d{3}\.\d{3})"
-                      r"\s*[·•\-–]\s*([\d.]+\s*GB)",
-                      page,
-                      flags=re.IGNORECASE
+              if not match:
+                  raise RuntimeError(
+                      "Could not identify Fortnite version: " + build
                   )
 
-                  for version, size in patches:
-                      if version == ps5_version:
-                          print("Verified matching patch size:", size)
-                          return size.replace(" ", "")
+              version = match.group(1)
 
-                  print(
-                      "No matching PS5 patch size found. "
-                      "Not using a size from an older patch."
-                  )
+              print("Fortnite game version:", version)
 
-              except Exception as error:
-                  print("Patch size lookup failed:", error)
+              return version
 
-              return "نامشخص"
+          def get_ps5_patch():
+              print("Fetching PS5 patch history...")
 
-          def read_file(filename):
-              if not os.path.exists(filename):
-                  return ""
-
-              with open(filename, "r", encoding="utf-8") as file:
-                  return file.read().strip()
-
-          def write_file(filename, content):
-              with open(filename, "w", encoding="utf-8") as file:
-                  file.write(content)
-
-          print("Checking Fortnite sources...")
-
-          # 1. Fetch the current Fortnite game version.
-          try:
-              response = requests.get(
-                  BUILD_URL,
-                  headers=HEADERS,
+              response = session.get(
+                  FRAMEPATCH_URL,
                   timeout=30
               )
               response.raise_for_status()
-              data = response.json()
 
-          except Exception as error:
-              raise RuntimeError(
-                  "Could not retrieve Fortnite build information: "
-                  + str(error)
+              page = clean_html(response.text)
+
+              # FramePatch patch history uses entries similar to:
+              # Patch 01.000.228 · 74.2 GB
+              pattern = re.compile(
+                  r"Patch\s+"
+                  r"(01\.\d{3}\.\d{3})"
+                  r"\s*[·•\-–]\s*"
+                  r"([\d.]+)\s*GB",
+                  flags=re.IGNORECASE
               )
 
-          build = str(data.get("build", "")).strip()
+              matches = pattern.findall(page)
 
-          version_match = re.search(
-              r"Release-([0-9]+(?:\.[0-9]+)+)",
-              build
-          )
+              if not matches:
+                  # Log a useful excerpt if the page format changes.
+                  location = page.lower().find("patch history")
 
-          if not version_match:
-              raise RuntimeError(
-                  "Could not detect the Fortnite game version from: "
-                  + build
+                  if location >= 0:
+                      print(
+                          "Patch history excerpt:",
+                          page[location:location + 1200]
+                      )
+                  else:
+                      print("Could not find patch history in page.")
+
+                  raise RuntimeError(
+                      "Could not extract PS5 patch version and size."
+                  )
+
+              # The page lists newest patch first.
+              patch_version, patch_size = matches[0]
+
+              print("FramePatch PS5 version:", patch_version)
+              print("FramePatch patch size:", patch_size + " GB")
+
+              return patch_version, patch_size + " GB"
+
+          def load_state():
+              raw = read_file(STATE_FILE)
+
+              if not raw:
+                  return None
+
+              # Current format: game_version|ps5_version
+              parts = raw.split("|")
+
+              if len(parts) >= 2:
+                  game_version = parts[0].strip()
+                  ps5_version = parts[1].strip()
+
+                  if re.fullmatch(
+                      r"\d+(?:\.\d+)+",
+                      game_version
+                  ):
+                      return {
+                          "game_version": game_version,
+                          "ps5_version": ps5_version
+                      }
+
+              # Also support older state files containing only a version.
+              if re.fullmatch(r"\d+(?:\.\d+)+", raw):
+                  return {
+                      "game_version": "",
+                      "ps5_version": raw
+                  }
+
+              return None
+
+          def make_latest(
+              game_version,
+              ps5_version,
+              notification_date,
+              update_size
+          ):
+              return (
+                  "🎮 FORTNITE PS5\n\n"
+                  f"Fortnite Version: {game_version}\n"
+                  f"PS5 Version: {ps5_version}\n"
+                  f"Last Notification Date: {notification_date}\n"
+                  f"Update Size: {update_size}\n"
               )
 
-          game_version = version_match.group(1)
-
-          print("Fortnite game version:", game_version)
-
-          # 2. Fetch the PS5 patch version and its size when available.
-          ps5_version = find_ps5_version(game_version)
-          update_size = find_update_size(ps5_version)
-
-          print("PS5 version:", ps5_version)
-          print("Update size:", update_size)
-
-          # 3. Read the previously tracked version.
-          old_state = read_file(STATE_FILE)
-          old_parts = old_state.split("|")
-
-          old_game_version = ""
-          old_ps5_version = ""
-
-          if len(old_parts) >= 2:
-              old_game_version = old_parts[0].strip()
-              old_ps5_version = old_parts[1].strip()
-
-          valid_old_state = bool(
-              re.fullmatch(
-                  r"\d+(?:\.\d+)+",
-                  old_game_version
+          def save_state(game_version, ps5_version):
+              write_file(
+                  STATE_FILE,
+                  f"{game_version}|{ps5_version}"
               )
-          )
 
-          # 4. Keep the last notification date until another notification
-          # is successfully sent.
+          print("Fortnite tracker started.")
+
+          # 1. Read the current game version.
+          game_version = get_game_version()
+
+          # 2. Read the latest PS5 patch and its reported size.
+          source_ps5_version, source_size = get_ps5_patch()
+
+          # 3. Load previously saved information.
+          old_state = load_state()
+
+          if old_state:
+              old_game_version = old_state["game_version"]
+              old_ps5_version = old_state["ps5_version"]
+          else:
+              old_game_version = ""
+              old_ps5_version = ""
+
+          print("Previous game version:", old_game_version or "None")
+          print("Previous PS5 version:", old_ps5_version or "None")
+
+          # 4. Never downgrade the saved PS5 patch because a source
+          # temporarily displays an older patch.
+          if (
+              old_ps5_version
+              and old_ps5_version != "نامشخص"
+              and version_key(source_ps5_version)
+                  < version_key(old_ps5_version)
+          ):
+              print(
+                  "WARNING: FramePatch is older than the saved PS5 "
+                  "version. Keeping the saved version."
+              )
+
+              ps5_version = old_ps5_version
+              update_size = "نامشخص"
+
+          else:
+              ps5_version = source_ps5_version
+              update_size = source_size
+
+          print("Selected PS5 version:", ps5_version)
+          print("Selected update size:", update_size)
+
+          # 5. Read the last successful notification date.
           last_notification_date = read_file(DATE_FILE)
 
           if not last_notification_date:
               last_notification_date = "هنوز اعلانی ارسال نشده"
 
-          tehran_now = datetime.now(
-              ZoneInfo("Asia/Tehran")
-          )
-
+          tehran_now = datetime.now(ZoneInfo("Asia/Tehran"))
           today = tehran_now.strftime("%Y-%m-%d")
 
-          # Do not treat an unknown-to-known PS5 version lookup as a
-          # separate update when the Fortnite game version is unchanged.
-          new_update = False
+          # 6. Establish a baseline on the first run.
+          if not old_state:
+              print("First run: establishing baseline without notification.")
 
-          if valid_old_state:
-              if old_game_version != game_version:
-                  new_update = True
-
-              elif (
-                  old_ps5_version != "نامشخص"
-                  and ps5_version != "نامشخص"
-                  and old_ps5_version != ps5_version
-              ):
-                  new_update = True
-
-          print("Previous state:", old_state or "None")
-          print(
-              "Current state:",
-              game_version + "|" + ps5_version
-          )
-          print("New update detected:", new_update)
-
-          # Prepare the latest information shown by /updates.
-          def make_latest(date_text):
-              return (
-                  "🎮 FORTNITE PS5\n\n"
-                  "Fortnite Version: " + game_version + "\n"
-                  "PS5 Version: " + ps5_version + "\n"
-                  "Last Notification Date: " + date_text + "\n"
-                  "Update Size: " + update_size + "\n"
-              )
-
-          # First run: establish a baseline without sending a false alert.
-          if not valid_old_state:
-              print("Initializing Fortnite tracker; no alert on baseline.")
-
-              write_file(
-                  STATE_FILE,
-                  game_version + "|" + ps5_version
-              )
+              save_state(game_version, ps5_version)
 
               write_file(
                   LATEST_FILE,
-                  make_latest(last_notification_date)
-              )
-
-          elif new_update:
-              print("NEW FORTNITE UPDATE DETECTED!")
-
-              if not BOT_TOKEN or not CHAT_ID:
-                  raise RuntimeError(
-                      "BOT_TOKEN or CHAT_ID secret is missing."
+                  make_latest(
+                      game_version,
+                      ps5_version,
+                      last_notification_date,
+                      update_size
                   )
-
-              # The date is the day this notification is sent,
-              # in Tehran time. It stays unchanged until the next alert.
-              notification_date = today
-
-              message = (
-                  "🎮 FORTNITE PS5 UPDATE\n\n"
-                  "Fortnite Version: " + game_version + "\n"
-                  "PS5 Version: " + ps5_version + "\n"
-                  "Notification Date: " + notification_date + "\n"
-                  "Update Size: " + update_size + "\n\n"
-                  "🆕 آپدیت جدید شناسایی شد"
               )
-
-              telegram_url = (
-                  "https://api.telegram.org/bot"
-                  + BOT_TOKEN
-                  + "/sendMessage"
-              )
-
-              telegram_response = requests.post(
-                  telegram_url,
-                  json={
-                      "chat_id": CHAT_ID,
-                      "text": message
-                  },
-                  timeout=30
-              )
-
-              print(
-                  "Telegram status:",
-                  telegram_response.status_code
-              )
-
-              if not telegram_response.ok:
-                  print(telegram_response.text)
-                  raise RuntimeError(
-                      "Telegram notification failed; state not saved."
-                  )
-
-              telegram_result = telegram_response.json()
-
-              if not telegram_result.get("ok"):
-                  raise RuntimeError(
-                      "Telegram did not confirm the notification."
-                  )
-
-              # Save the new version and date only after Telegram succeeds.
-              write_file(
-                  STATE_FILE,
-                  game_version + "|" + ps5_version
-              )
-
-              write_file(
-                  DATE_FILE,
-                  notification_date
-              )
-
-              write_file(
-                  LATEST_FILE,
-                  make_latest(notification_date)
-              )
-
-              print("Notification sent and date saved:", notification_date)
 
           else:
-              print("No new Fortnite update.")
+              # Notify only when a newer PS5 patch is detected.
+              new_update = version_is_newer(
+                  ps5_version,
+                  old_ps5_version
+              ) if old_ps5_version else False
 
-              # Keep the last notification date unchanged.
-              write_file(
-                  STATE_FILE,
-                  game_version + "|" + ps5_version
-              )
+              print("New PS5 update detected:", new_update)
+
+              if new_update:
+                  if not BOT_TOKEN or not CHAT_ID:
+                      raise RuntimeError(
+                          "BOT_TOKEN or CHAT_ID secret is missing."
+                      )
+
+                  message = (
+                      "🎮 FORTNITE PS5 UPDATE\n\n"
+                      f"Fortnite Version: {game_version}\n"
+                      f"PS5 Version: {ps5_version}\n"
+                      f"Notification Date: {today}\n"
+                      f"Update Size: {update_size}\n\n"
+                      "🆕 آپدیت جدید PS5 شناسایی شد"
+                  )
+
+                  telegram_url = (
+                      f"https://api.telegram.org/bot"
+                      f"{BOT_TOKEN}/sendMessage"
+                  )
+
+                  response = requests.post(
+                      telegram_url,
+                      json={
+                          "chat_id": CHAT_ID,
+                          "text": message
+                      },
+                      timeout=30
+                  )
+
+                  print("Telegram HTTP:", response.status_code)
+                  response.raise_for_status()
+
+                  result = response.json()
+
+                  if not result.get("ok"):
+                      raise RuntimeError(
+                          "Telegram did not confirm the notification."
+                      )
+
+                  # Update notification date only after Telegram confirms.
+                  last_notification_date = today
+
+                  write_file(DATE_FILE, today)
+
+                  print("Notification sent successfully.")
+
+              else:
+                  print("No newer PS5 patch detected.")
+
+              # Save the latest game version and selected PS5 patch.
+              save_state(game_version, ps5_version)
 
               write_file(
                   LATEST_FILE,
-                  make_latest(last_notification_date)
+                  make_latest(
+                      game_version,
+                      ps5_version,
+                      last_notification_date,
+                      update_size
+                  )
               )
 
-          # 5. Commit the updated files to GitHub.
+          # 7. Commit tracker files.
           subprocess.run(
-              ["git", "config", "user.name", "github-actions[bot]"],
+              [
+                  "git", "config", "user.name",
+                  "github-actions[bot]"
+              ],
               check=True
           )
 
           subprocess.run(
               [
-                  "git",
-                  "config",
-                  "user.email",
+                  "git", "config", "user.email",
                   "41898282+github-actions[bot]@users.noreply.github.com"
               ],
               check=True
           )
 
           subprocess.run(
-              ["git", "add", STATE_FILE, LATEST_FILE, DATE_FILE],
+              [
+                  "git", "add",
+                  STATE_FILE,
+                  LATEST_FILE,
+                  DATE_FILE
+              ],
               check=True
           )
 
@@ -410,25 +402,28 @@ jobs:
 
           if changed.returncode != 0:
               subprocess.run(
-                  ["git", "commit", "-m", "Update Fortnite tracker"],
+                  [
+                      "git", "commit", "-m",
+                      "Update Fortnite tracker"
+                  ],
                   check=True
               )
 
               pushed = False
 
               for attempt in range(3):
-                  push = subprocess.run(
+                  result = subprocess.run(
                       ["git", "push", "origin", "main"]
                   )
 
-                  if push.returncode == 0:
-                      print("Tracker files pushed successfully.")
+                  if result.returncode == 0:
                       pushed = True
+                      print("Tracker files pushed successfully.")
                       break
 
                   print(
-                      "Push failed. Syncing with origin. Attempt:",
-                      attempt + 1
+                      f"Push failed; syncing. Attempt "
+                      f"{attempt + 1}/3"
                   )
 
                   subprocess.run(
@@ -445,7 +440,7 @@ jobs:
 
               if not pushed:
                   raise RuntimeError(
-                      "Git push failed after 3 attempts."
+                      "Could not push tracker files after 3 attempts."
                   )
 
           else:
