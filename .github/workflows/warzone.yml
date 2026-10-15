@@ -26,7 +26,6 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-
         run: |
           python3 - <<'PY'
           import os
@@ -53,7 +52,6 @@ jobs:
           CHAT_ID = os.environ.get("CHAT_ID", "")
 
           session = requests.Session()
-
           session.headers.update({
               "User-Agent": "Mozilla/5.0",
               "Accept": "application/json, text/plain, */*"
@@ -77,14 +75,14 @@ jobs:
               value = str(value).strip()
 
               try:
-                  result = datetime.fromisoformat(
+                  parsed = datetime.fromisoformat(
                       value.replace("Z", "+00:00")
                   )
 
-                  if result.tzinfo is None:
-                      result = result.replace(tzinfo=timezone.utc)
+                  if parsed.tzinfo is None:
+                      parsed = parsed.replace(tzinfo=timezone.utc)
 
-                  return result.astimezone(timezone.utc)
+                  return parsed.astimezone(timezone.utc)
 
               except (ValueError, TypeError):
                   pass
@@ -96,22 +94,16 @@ jobs:
               ):
                   try:
                       return datetime.strptime(
-                          value,
-                          fmt
+                          value, fmt
                       ).replace(tzinfo=timezone.utc)
-
                   except ValueError:
                       continue
 
               return datetime.min.replace(tzinfo=timezone.utc)
 
           def version_key(value):
-              parts = re.findall(r"\d+", str(value or ""))
-
-              if not parts:
-                  return (0,)
-
-              return tuple(int(part) for part in parts)
+              numbers = re.findall(r"\d+", str(value or ""))
+              return tuple(int(n) for n in numbers) if numbers else (0,)
 
           def normalize_size(value):
               if value is None or value == "":
@@ -119,18 +111,15 @@ jobs:
 
               if isinstance(value, str):
                   value = value.strip()
-
                   if not value:
                       return "نامشخص"
 
-                  # Keep sizes already expressed with units.
                   if re.search(r"[a-zA-Z]", value):
                       return value
 
               try:
                   number = float(value)
 
-                  # Large numeric values are assumed to be bytes.
                   if number >= 1_000_000_000:
                       return f"{number / 1_000_000_000:.1f} GB"
 
@@ -154,7 +143,7 @@ jobs:
               except json.JSONDecodeError:
                   pass
 
-              # Support the old format, which stored only the version.
+              # Old versions of this tracker saved only the version.
               return {
                   "version": raw,
                   "import_date": "",
@@ -174,17 +163,20 @@ jobs:
               print("Page HTTP:", page_response.status_code)
               page_response.raise_for_status()
 
-              # Send form fields as form data, matching the declared
-              # application/x-www-form-urlencoded content type.
+              # Preserve the original request format.
+              payload = {
+                  "titleid": TITLE_ID,
+                  "key": KEY
+              }
+
               response = session.post(
                   API,
-                  data={
-                      "titleid": TITLE_ID,
-                      "key": KEY
-                  },
+                  data=json.dumps(payload),
                   timeout=30,
                   headers={
+                      "User-Agent": "Mozilla/5.0",
                       "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                      "Accept": "application/json",
                       "Referer": PAGE,
                       "Origin": BASE,
                       "X-Requested-With": "XMLHttpRequest"
@@ -193,54 +185,53 @@ jobs:
 
               print("API HTTP:", response.status_code)
 
-              if not response.ok:
-                  print("API response:", response.text[:1500])
-                  response.raise_for_status()
+              if response.status_code != 200:
+                  print(response.text[:1500])
+                  raise RuntimeError("Warzone API request failed")
 
               try:
                   data = response.json()
-
               except ValueError:
-                  print("API returned invalid JSON:")
                   print(response.text[:1500])
-                  raise RuntimeError("Invalid Prospero API response")
+                  raise RuntimeError("Warzone API returned invalid JSON")
 
               if not isinstance(data, dict):
                   raise RuntimeError("Unexpected API response structure")
 
               if not data.get("success"):
                   print("API response:", data)
-                  raise RuntimeError("Prospero API returned failure")
+                  raise RuntimeError(
+                      "Warzone API rejected the request: "
+                      + str(data.get("message", "Unknown error"))
+                  )
 
-              patches = data.get("patches")
+              patches = data.get("patches", [])
 
               if not isinstance(patches, list) or not patches:
                   print("API response:", data)
-                  raise RuntimeError("No Warzone patches returned")
+                  raise RuntimeError("No Warzone patches found")
 
               return patches
 
-          print("🎮 Warzone PS5 tracker started")
+          print("Warzone PS5 tracker started")
 
           patches = get_patches()
 
-          # Keep only entries that have a version.
           valid_patches = [
-              patch for patch in patches
-              if isinstance(patch, dict)
-              and patch.get("content_ver") is not None
-              and str(patch.get("content_ver")).strip()
+              p for p in patches
+              if isinstance(p, dict)
+              and p.get("content_ver") is not None
+              and str(p.get("content_ver")).strip()
           ]
 
           if not valid_patches:
               raise RuntimeError("No patches with a valid version found")
 
-          # Do not assume patches[0] is the newest.
-          # Sort by import date first, then by version.
+          # Select newest by import date, then version as a tie-breaker.
           valid_patches.sort(
-              key=lambda patch: (
-                  parse_date(patch.get("import_date")),
-                  version_key(patch.get("content_ver"))
+              key=lambda p: (
+                  parse_date(p.get("import_date")),
+                  version_key(p.get("content_ver"))
               ),
               reverse=True
           )
@@ -248,7 +239,8 @@ jobs:
           latest = valid_patches[0]
 
           version = str(latest.get("content_ver")).strip()
-          size = normalize_size(latest.get("filesize"))
+          raw_size = latest.get("filesize")
+          size = normalize_size(raw_size)
           firmware = str(
               latest.get("required_firmware") or "نامشخص"
           ).strip()
@@ -265,7 +257,7 @@ jobs:
           print("Size:", size)
           print("Required firmware:", firmware)
           print("Import date:", import_date)
-          print("Total patches returned:", len(valid_patches))
+          print("Patches returned:", len(valid_patches))
           print()
 
           old_state, state_format = load_state()
@@ -276,101 +268,67 @@ jobs:
           else:
               print("No previous state found")
 
-          tehran_now = datetime.now(
+          today = datetime.now(
               ZoneInfo("Asia/Tehran")
-          )
-
-          today = tehran_now.strftime("%Y-%m-%d")
-
-          old_notification_date = (
-              old_state.get("notification_date", "")
-              if old_state else ""
-          )
-
-          if not old_notification_date:
-              old_notification_date = "هنوز اعلانی ارسال نشده"
-
-          # Import date is part of the patch identity when available.
-          # This also helps detect a newly added patch when its version
-          # string happens to match an existing entry.
-          def patch_signature(patch):
-              patch_version = str(
-                  patch.get("content_ver") or ""
-              ).strip()
-
-              patch_date = str(
-                  patch.get("import_date") or ""
-              ).strip()
-
-              patch_size = str(
-                  patch.get("filesize") or ""
-              ).strip()
-
-              if patch_date:
-                  return patch_version + "|" + patch_date
-
-              return patch_version + "|" + patch_size
-
-          current_signature = patch_signature(latest)
-
-          previous_signature = ""
+          ).strftime("%Y-%m-%d")
 
           if old_state:
               old_version = str(
                   old_state.get("version") or ""
               ).strip()
-
               old_import_date = str(
                   old_state.get("import_date") or ""
               ).strip()
-
               old_size = str(
                   old_state.get("size") or ""
               ).strip()
+          else:
+              old_version = ""
+              old_import_date = ""
+              old_size = ""
 
-              if old_import_date:
-                  previous_signature = (
-                      old_version + "|" + old_import_date
-                  )
-              elif old_size:
-                  previous_signature = (
-                      old_version + "|" + old_size
-                  )
+          def signature(ver, imp_date, file_size):
+              if imp_date:
+                  return ver + "|" + imp_date
+              return ver + "|" + file_size
+
+          current_signature = signature(
+              version, import_date, str(raw_size or "")
+          )
+
+          old_signature = ""
+
+          if old_version:
+              old_signature = signature(
+                  old_version,
+                  old_import_date,
+                  old_size
+              )
 
           is_new_update = False
 
           if not old_state:
-              # First run: establish a baseline without sending an alert.
-              print("First run: saving current patch without notification")
+              print("First run: saving baseline without notification")
 
           elif state_format == "legacy":
-              # Old file stored only the version. Do not send a false
-              # notification just because we are upgrading the state format.
-              if old_state.get("version") != version:
+              # Migrate old state without a false alert if the version
+              # has not changed. Notify if the actual version differs.
+              if old_version != version:
                   is_new_update = True
               else:
-                  print(
-                      "Migrating legacy state without an alert. "
-                      "Future patch changes will be monitored."
-                  )
+                  print("Migrating legacy state without an alert")
 
-          elif previous_signature != current_signature:
+          elif old_signature != current_signature:
               is_new_update = True
 
           print("Current signature:", current_signature)
-          print("Previous signature:", previous_signature or "None")
+          print("Previous signature:", old_signature or "None")
           print("New update detected:", is_new_update)
 
-          # Build the latest file consumed by the Cloudflare Worker.
-          def make_latest(notification_date):
-              return (
-                  "🎮 WARZONE PS5\n\n"
-                  f"Version: {version}\n"
-                  f"Size: {size}\n"
-                  f"Required Firmware: {firmware}\n"
-                  f"Patch Added: {import_date}\n"
-                  f"Last Notification Date: {notification_date}\n"
-              )
+          old_notification_date = (
+              old_state.get("notification_date", "")
+              if old_state else ""
+          )
 
           if is_new_update:
               if not BOT_TOKEN or not CHAT_ID:
@@ -417,30 +375,22 @@ jobs:
                   raise RuntimeError("Telegram rejected the notification")
 
               print("Telegram notification sent successfully")
+              notification_date_to_save = notification_date
 
           else:
-              notification_date = old_notification_date
-              print("No new patch notification required")
+              print("No new Warzone update")
+              notification_date_to_save = old_notification_date
 
-          # Save the current patch information.
-          # For a new patch, the notification must succeed before state
-          # is updated, so a failed Telegram call can be retried next run.
+          if not notification_date_to_save:
+              notification_date_to_save = ""
+
           new_state = {
               "version": version,
               "import_date": import_date,
-              "size": str(latest.get("filesize") or ""),
+              "size": str(raw_size or ""),
               "firmware": firmware,
-              "notification_date": (
-                  today if is_new_update
-                  else (
-                      old_state.get("notification_date", "")
-                      if old_state else ""
-                  )
-              )
+              "notification_date": notification_date_to_save
           }
-
-          if not new_state["notification_date"]:
-              new_state["notification_date"] = ""
 
           write_file(
               STATE_FILE,
@@ -451,19 +401,28 @@ jobs:
               )
           )
 
-          write_file(
-              LATEST_FILE,
-              make_latest(notification_date)
+          date_for_latest = (
+              notification_date_to_save
+              if notification_date_to_save
+              else "هنوز اعلانی ارسال نشده"
           )
+
+          latest_text = (
+              "🎮 WARZONE PS5\n\n"
+              f"Version: {version}\n"
+              f"Size: {size}\n"
+              f"Required Firmware: {firmware}\n"
+              f"Patch Added: {import_date}\n"
+              f"Last Notification Date: {date_for_latest}\n"
+          )
+
+          write_file(LATEST_FILE, latest_text)
 
           print()
           print("Updating repository state...")
 
           subprocess.run(
-              [
-                  "git", "config", "user.name",
-                  "github-actions[bot]"
-              ],
+              ["git", "config", "user.name", "github-actions[bot]"],
               check=True
           )
 
@@ -486,10 +445,7 @@ jobs:
 
           if changed.returncode != 0:
               subprocess.run(
-                  [
-                      "git", "commit", "-m",
-                      "Update Warzone tracker"
-                  ],
+                  ["git", "commit", "-m", "Update Warzone tracker"],
                   check=True
               )
 
