@@ -31,13 +31,12 @@ jobs:
           python3 - <<'PY'
           import os
           import re
-          import html
           import json
           import time
           import subprocess
           import requests
 
-          from datetime import datetime
+          from datetime import datetime, timezone
           from zoneinfo import ZoneInfo
 
           BUILD_URL = (
@@ -46,7 +45,16 @@ jobs:
               "main/data/meta/build_info.json"
           )
 
-          FRAMEPATCH_URL = "https://framepatch.app/games/fortnite"
+          BASE = "https://prosperopatches.com"
+          TITLE_ID = "PPSA01922"
+          PAGE = BASE + "/" + TITLE_ID
+          API = BASE + "/api/internal/loadpatches"
+
+          # Same request key and request format as the working Warzone tracker.
+          KEY = (
+              "db36a93c8bdfcc99c6c0170671c3b49d"
+              "75a9873eb3c634fde0ab26392353a299"
+          )
 
           STATE_FILE = "fortnite_version.txt"
           LATEST_FILE = "fortnite_latest.txt"
@@ -56,10 +64,8 @@ jobs:
           CHAT_ID = os.environ.get("CHAT_ID", "")
 
           HEADERS = {
-              "User-Agent": (
-                  "Mozilla/5.0 "
-                  "(compatible; PS5UpdateTracker/1.0)"
-              )
+              "User-Agent": "Mozilla/5.0",
+              "Accept": "application/json, text/plain, */*"
           }
 
           session = requests.Session()
@@ -76,35 +82,86 @@ jobs:
               with open(filename, "w", encoding="utf-8") as f:
                   f.write(content)
 
-          def version_key(version):
-              numbers = re.findall(r"\d+", str(version or ""))
+          def version_key(value):
+              numbers = re.findall(r"\d+", str(value or ""))
               return tuple(int(n) for n in numbers) if numbers else (0,)
 
-          def version_is_newer(candidate, previous):
+          def is_newer(candidate, previous):
               return version_key(candidate) > version_key(previous)
 
-          def clean_html(content):
-              content = re.sub(
-                  r"<script\b[^>]*>.*?</script>",
-                  " ",
-                  content,
-                  flags=re.IGNORECASE | re.DOTALL
-              )
+          def parse_date(value):
+              if not value:
+                  return datetime.min.replace(tzinfo=timezone.utc)
 
-              content = re.sub(
-                  r"<style\b[^>]*>.*?</style>",
-                  " ",
-                  content,
-                  flags=re.IGNORECASE | re.DOTALL
-              )
+              value = str(value).strip()
 
-              content = re.sub(r"<[^>]+>", " ", content)
+              try:
+                  dt = datetime.fromisoformat(
+                      value.replace("Z", "+00:00")
+                  )
 
-              return re.sub(
-                  r"\s+",
-                  " ",
-                  html.unescape(content)
-              ).strip()
+                  if dt.tzinfo is None:
+                      dt = dt.replace(tzinfo=timezone.utc)
+
+                  return dt.astimezone(timezone.utc)
+
+              except (ValueError, TypeError):
+                  pass
+
+              for fmt in (
+                  "%Y-%m-%d %H:%M:%S",
+                  "%Y-%m-%d %H:%M",
+                  "%Y-%m-%d"
+              ):
+                  try:
+                      return datetime.strptime(
+                          value, fmt
+                      ).replace(tzinfo=timezone.utc)
+                  except ValueError:
+                      continue
+
+              return datetime.min.replace(tzinfo=timezone.utc)
+
+          def normalize_size(value):
+              if value is None or value == "":
+                  return "نامشخص"
+
+              if isinstance(value, str):
+                  value = value.strip()
+
+                  if not value:
+                      return "نامشخص"
+
+                  # If the API already includes a unit, preserve it.
+                  if re.search(
+                      r"\b(GB|MB|KB|TB|GiB|MiB)\b",
+                      value,
+                      re.IGNORECASE
+                  ):
+                      return value
+
+                  # Continue parsing numeric strings below.
+                  try:
+                      number = float(value.replace(",", ""))
+                  except ValueError:
+                      return value
+
+              else:
+                  try:
+                      number = float(value)
+                  except (TypeError, ValueError):
+                      return str(value)
+
+              # Large numeric values are assumed to be bytes.
+              if number >= 1_000_000_000:
+                  return f"{number / 1_000_000_000:.2f} GB"
+
+              # Smaller numeric values from this source are commonly
+              # expressed in GB; retain the value without false precision.
+              if number > 0:
+                  return f"{number:g} GB"
+
+              return "نامشخص"
 
           def get_game_version():
               print("Fetching Fortnite build information...")
@@ -131,52 +188,90 @@ jobs:
 
               return version
 
-          def get_ps5_patch():
-              print("Fetching PS5 patch history...")
+          def get_ps5_patches():
+              print("Opening ProsperoPatches:", PAGE)
 
-              response = session.get(
-                  FRAMEPATCH_URL,
-                  timeout=30
+              page_response = session.get(PAGE, timeout=30)
+
+              print("Page HTTP:", page_response.status_code)
+              page_response.raise_for_status()
+
+              payload = {
+                  "titleid": TITLE_ID,
+                  "key": KEY
+              }
+
+              # Keep the exact request format used by the working
+              # Warzone workflow.
+              response = session.post(
+                  API,
+                  data=json.dumps(payload),
+                  timeout=30,
+                  headers={
+                      "User-Agent": "Mozilla/5.0",
+                      "Content-Type": (
+                          "application/x-www-form-urlencoded; charset=UTF-8"
+                      ),
+                      "Accept": "application/json",
+                      "Referer": PAGE,
+                      "Origin": BASE,
+                      "X-Requested-With": "XMLHttpRequest"
+                  }
               )
+
+              print("API HTTP:", response.status_code)
               response.raise_for_status()
 
-              page = clean_html(response.text)
-
-              # FramePatch patch history uses entries similar to:
-              # Patch 01.000.228 · 74.2 GB
-              pattern = re.compile(
-                  r"Patch\s+"
-                  r"(01\.\d{3}\.\d{3})"
-                  r"\s*[·•\-–]\s*"
-                  r"([\d.]+)\s*GB",
-                  flags=re.IGNORECASE
-              )
-
-              matches = pattern.findall(page)
-
-              if not matches:
-                  # Log a useful excerpt if the page format changes.
-                  location = page.lower().find("patch history")
-
-                  if location >= 0:
-                      print(
-                          "Patch history excerpt:",
-                          page[location:location + 1200]
-                      )
-                  else:
-                      print("Could not find patch history in page.")
-
+              try:
+                  data = response.json()
+              except ValueError:
+                  print(response.text[:1500])
                   raise RuntimeError(
-                      "Could not extract PS5 patch version and size."
+                      "ProsperoPatches returned invalid JSON."
                   )
 
-              # The page lists newest patch first.
-              patch_version, patch_size = matches[0]
+              if not isinstance(data, dict):
+                  raise RuntimeError(
+                      "Unexpected ProsperoPatches response."
+                  )
 
-              print("FramePatch PS5 version:", patch_version)
-              print("FramePatch patch size:", patch_size + " GB")
+              if not data.get("success"):
+                  print("API response:", data)
+                  raise RuntimeError(
+                      "ProsperoPatches rejected the request: "
+                      + str(data.get("message", "Unknown error"))
+                  )
 
-              return patch_version, patch_size + " GB"
+              patches = data.get("patches", [])
+
+              if not isinstance(patches, list) or not patches:
+                  print("API response:", data)
+                  raise RuntimeError(
+                      "No Fortnite PS5 patches were returned."
+                  )
+
+              valid = [
+                  patch for patch in patches
+                  if isinstance(patch, dict)
+                  and str(patch.get("content_ver") or "").strip()
+              ]
+
+              if not valid:
+                  raise RuntimeError(
+                      "No patches with a valid content_ver were returned."
+                  )
+
+              valid.sort(
+                  key=lambda patch: (
+                      parse_date(patch.get("import_date")),
+                      version_key(patch.get("content_ver"))
+                  ),
+                  reverse=True
+              )
+
+              print("Patches received:", len(valid))
+
+              return valid
 
           def load_state():
               raw = read_file(STATE_FILE)
@@ -184,65 +279,107 @@ jobs:
               if not raw:
                   return None
 
-              # Current format: game_version|ps5_version
+              # New JSON format.
+              try:
+                  state = json.loads(raw)
+
+                  if isinstance(state, dict):
+                      return state
+
+              except json.JSONDecodeError:
+                  pass
+
+              # Compatibility with the previous format:
+              # game_version|ps5_version
               parts = raw.split("|")
 
               if len(parts) >= 2:
-                  game_version = parts[0].strip()
-                  ps5_version = parts[1].strip()
+                  return {
+                      "game_version": parts[0].strip(),
+                      "ps5_version": parts[1].strip(),
+                      "patch_date": "",
+                      "size": ""
+                  }
 
-                  if re.fullmatch(
-                      r"\d+(?:\.\d+)+",
-                      game_version
-                  ):
-                      return {
-                          "game_version": game_version,
-                          "ps5_version": ps5_version
-                      }
-
-              # Also support older state files containing only a version.
+              # Compatibility with a version-only state file.
               if re.fullmatch(r"\d+(?:\.\d+)+", raw):
                   return {
                       "game_version": "",
-                      "ps5_version": raw
+                      "ps5_version": raw,
+                      "patch_date": "",
+                      "size": ""
                   }
 
               return None
 
+          def save_state(state):
+              write_file(
+                  STATE_FILE,
+                  json.dumps(
+                      state,
+                      ensure_ascii=False,
+                      indent=2
+                  )
+              )
+
           def make_latest(
               game_version,
               ps5_version,
+              patch_date,
               notification_date,
-              update_size
+              size,
+              firmware
           ):
               return (
                   "🎮 FORTNITE PS5\n\n"
                   f"Fortnite Version: {game_version}\n"
                   f"PS5 Version: {ps5_version}\n"
+                  f"Patch Added: {patch_date or 'نامشخص'}\n"
                   f"Last Notification Date: {notification_date}\n"
-                  f"Update Size: {update_size}\n"
-              )
-
-          def save_state(game_version, ps5_version):
-              write_file(
-                  STATE_FILE,
-                  f"{game_version}|{ps5_version}"
+                  f"Update Size: {size}\n"
+                  f"Required Firmware: {firmware}\n"
               )
 
           print("Fortnite tracker started.")
 
-          # 1. Read the current game version.
+          # 1. Current Fortnite game version.
           game_version = get_game_version()
 
-          # 2. Read the latest PS5 patch and its reported size.
-          source_ps5_version, source_size = get_ps5_patch()
+          # 2. Current PS5 patch information.
+          patches = get_ps5_patches()
+          latest_patch = patches[0]
 
-          # 3. Load previously saved information.
+          source_version = str(
+              latest_patch.get("content_ver") or ""
+          ).strip()
+
+          source_date = str(
+              latest_patch.get("import_date") or ""
+          ).strip()
+
+          source_size_raw = latest_patch.get("filesize")
+          source_size = normalize_size(source_size_raw)
+
+          source_firmware = str(
+              latest_patch.get("required_firmware") or "نامشخص"
+          ).strip()
+
+          print("Latest API patch version:", source_version)
+          print("API patch date:", source_date or "Unknown")
+          print("API patch size:", source_size)
+          print("Required firmware:", source_firmware)
+
+          # 3. Previous state.
           old_state = load_state()
 
           if old_state:
-              old_game_version = old_state["game_version"]
-              old_ps5_version = old_state["ps5_version"]
+              old_game_version = str(
+                  old_state.get("game_version") or ""
+              ).strip()
+
+              old_ps5_version = str(
+                  old_state.get("ps5_version") or ""
+              ).strip()
           else:
               old_game_version = ""
               old_ps5_version = ""
@@ -250,60 +387,79 @@ jobs:
           print("Previous game version:", old_game_version or "None")
           print("Previous PS5 version:", old_ps5_version or "None")
 
-          # 4. Never downgrade the saved PS5 patch because a source
-          # temporarily displays an older patch.
+          notification_date = read_file(DATE_FILE)
+
+          if not notification_date and old_state:
+              notification_date = str(
+                  old_state.get("notification_date") or ""
+              ).strip()
+
+          if not notification_date:
+              notification_date = "هنوز اعلانی ارسال نشده"
+
+          now_tehran = datetime.now(ZoneInfo("Asia/Tehran"))
+          today = now_tehran.strftime("%Y-%m-%d")
+
+          # 4. Protect against a temporary source regression.
           if (
               old_ps5_version
-              and old_ps5_version != "نامشخص"
-              and version_key(source_ps5_version)
+              and version_key(source_version)
                   < version_key(old_ps5_version)
           ):
               print(
-                  "WARNING: FramePatch is older than the saved PS5 "
-                  "version. Keeping the saved version."
+                  "WARNING: API returned an older patch. "
+                  "Keeping the previously saved version."
               )
 
-              ps5_version = old_ps5_version
-              update_size = "نامشخص"
+              selected_version = old_ps5_version
+              selected_size = "نامشخص"
+              selected_date = ""
+              selected_firmware = "نامشخص"
 
           else:
-              ps5_version = source_ps5_version
-              update_size = source_size
+              selected_version = source_version
+              selected_size = source_size
+              selected_date = source_date
+              selected_firmware = source_firmware
 
-          print("Selected PS5 version:", ps5_version)
-          print("Selected update size:", update_size)
+          print("Selected PS5 version:", selected_version)
+          print("Selected size:", selected_size)
 
-          # 5. Read the last successful notification date.
-          last_notification_date = read_file(DATE_FILE)
-
-          if not last_notification_date:
-              last_notification_date = "هنوز اعلانی ارسال نشده"
-
-          tehran_now = datetime.now(ZoneInfo("Asia/Tehran"))
-          today = tehran_now.strftime("%Y-%m-%d")
-
-          # 6. Establish a baseline on the first run.
+          # 5. First run establishes a baseline without a false alert.
           if not old_state:
-              print("First run: establishing baseline without notification.")
+              print("First run: saving baseline without notification.")
 
-              save_state(game_version, ps5_version)
+              state = {
+                  "game_version": game_version,
+                  "ps5_version": selected_version,
+                  "patch_date": selected_date,
+                  "size": source_size_raw,
+                  "notification_date": ""
+              }
+
+              save_state(state)
 
               write_file(
                   LATEST_FILE,
                   make_latest(
                       game_version,
-                      ps5_version,
-                      last_notification_date,
-                      update_size
+                      selected_version,
+                      selected_date,
+                      notification_date,
+                      selected_size,
+                      selected_firmware
                   )
               )
 
           else:
-              # Notify only when a newer PS5 patch is detected.
-              new_update = version_is_newer(
-                  ps5_version,
-                  old_ps5_version
-              ) if old_ps5_version else False
+              # Notify only when the PS5 patch version is newer.
+              new_update = (
+                  bool(old_ps5_version)
+                  and is_newer(
+                      selected_version,
+                      old_ps5_version
+                  )
+              )
 
               print("New PS5 update detected:", new_update)
 
@@ -316,9 +472,11 @@ jobs:
                   message = (
                       "🎮 FORTNITE PS5 UPDATE\n\n"
                       f"Fortnite Version: {game_version}\n"
-                      f"PS5 Version: {ps5_version}\n"
+                      f"PS5 Version: {selected_version}\n"
+                      f"Patch Added: {selected_date or 'نامشخص'}\n"
                       f"Notification Date: {today}\n"
-                      f"Update Size: {update_size}\n\n"
+                      f"Update Size: {selected_size}\n"
+                      f"Required Firmware: {selected_firmware}\n\n"
                       "🆕 آپدیت جدید PS5 شناسایی شد"
                   )
 
@@ -327,7 +485,7 @@ jobs:
                       f"{BOT_TOKEN}/sendMessage"
                   )
 
-                  response = requests.post(
+                  telegram_response = requests.post(
                       telegram_url,
                       json={
                           "chat_id": CHAT_ID,
@@ -336,40 +494,61 @@ jobs:
                       timeout=30
                   )
 
-                  print("Telegram HTTP:", response.status_code)
-                  response.raise_for_status()
+                  print(
+                      "Telegram HTTP:",
+                      telegram_response.status_code
+                  )
 
-                  result = response.json()
+                  telegram_response.raise_for_status()
 
-                  if not result.get("ok"):
+                  telegram_result = telegram_response.json()
+
+                  if not telegram_result.get("ok"):
+                      print(telegram_result)
                       raise RuntimeError(
                           "Telegram did not confirm the notification."
                       )
 
-                  # Update notification date only after Telegram confirms.
-                  last_notification_date = today
+                  notification_date = today
 
-                  write_file(DATE_FILE, today)
+                  write_file(DATE_FILE, notification_date)
 
-                  print("Notification sent successfully.")
+                  print("Telegram notification sent successfully.")
 
               else:
                   print("No newer PS5 patch detected.")
 
-              # Save the latest game version and selected PS5 patch.
-              save_state(game_version, ps5_version)
+              state = {
+                  "game_version": game_version,
+                  "ps5_version": selected_version,
+                  "patch_date": selected_date,
+                  "size": (
+                      source_size_raw
+                      if selected_version == source_version
+                      else ""
+                  ),
+                  "notification_date": (
+                      ""
+                      if notification_date == "هنوز اعلانی ارسال نشده"
+                      else notification_date
+                  )
+              }
+
+              save_state(state)
 
               write_file(
                   LATEST_FILE,
                   make_latest(
                       game_version,
-                      ps5_version,
-                      last_notification_date,
-                      update_size
+                      selected_version,
+                      selected_date,
+                      notification_date,
+                      selected_size,
+                      selected_firmware
                   )
               )
 
-          # 7. Commit tracker files.
+          # 6. Commit updated files to GitHub.
           subprocess.run(
               [
                   "git", "config", "user.name",
@@ -396,11 +575,11 @@ jobs:
               check=True
           )
 
-          changed = subprocess.run(
+          diff = subprocess.run(
               ["git", "diff", "--cached", "--quiet"]
           )
 
-          if changed.returncode != 0:
+          if diff.returncode != 0:
               subprocess.run(
                   [
                       "git", "commit", "-m",
@@ -422,8 +601,7 @@ jobs:
                       break
 
                   print(
-                      f"Push failed; syncing. Attempt "
-                      f"{attempt + 1}/3"
+                      f"Push failed. Attempt {attempt + 1}/3"
                   )
 
                   subprocess.run(
@@ -440,7 +618,7 @@ jobs:
 
               if not pushed:
                   raise RuntimeError(
-                      "Could not push tracker files after 3 attempts."
+                      "Git push failed after 3 attempts."
                   )
 
           else:
