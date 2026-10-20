@@ -1,6 +1,6 @@
 {
   "game_version": "42.40",
-  "ps5_version": "01.000.235",
+  "ps5_version": "01.000.236",
   "size": "78.1 GB",
-  "notification_date": "2026-10-15"
+  "notification_date": "2026-10-20"
 }
