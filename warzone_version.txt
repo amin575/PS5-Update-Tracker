@@ -1,7 +1,7 @@
 {
-  "version": "01.109.000",
-  "import_date": "2026-10-15 16:35:24",
-  "size": "27.1 GB",
-  "firmware": "14.00.00.39",
-  "notification_date": "2026-10-15"
+  "version": "01.110.000",
+  "import_date": "2026-10-19 21:55:22",
+  "size": "25.7 GB",
+  "firmware": "14.10.00.03",
+  "notification_date": "2026-10-20"
 }
