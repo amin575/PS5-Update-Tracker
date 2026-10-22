@@ -1,2 +1,8 @@
-Version: 01.000.228
-Size: 74.2 GB
+🎮 FORTNITE PS5
+
+Fortnite Version: 42.40
+PS5 Version: 01.000.236
+Update Size: 78.1 GB
+Last Notification Date: 2026-10-20
+Last Checked: 2026-10-22 21:02:21
+Source: ProsperoPatches
