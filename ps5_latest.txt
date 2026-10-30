@@ -1,4 +1,3 @@
 Version: 26.07-14.20.00.07-00.00.00.0.1
-Short Version: 14.20.00.00
+Release Date: 2026-10-14
 Size: 1.18 GB
-Size Bytes: 1266086912
