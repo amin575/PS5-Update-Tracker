@@ -1,3 +1,5 @@
 GTA VI PS5
-Status: هنوز اطلاعاتی در Prospero ثبت نشده.
-Tracker: Active
+Version: 01.001.004
+Date: 2026-11-09
+Size: 207.8 GB
+Required Firmware: 14.22.00.00
