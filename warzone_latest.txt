@@ -1,7 +1,5 @@
-🎮 WARZONE PS5
-
 Version: 01.112.000
 Size: 27.6 GB
 Required Firmware: 14.20.00.07
-Patch Added: 2026-11-10 20:20:04
-Last Notification Date: 2026-11-11
+Import Date: 2026-11-10 20:20:04
+Source Updated: Last updated 1 day ago
