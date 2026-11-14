@@ -1,5 +1,5 @@
 GTA VI PS5
-Version: 01.001.004
-Date: 2026-11-09
+Version: 01.002.000
+Date: 2026-11-14
 Size: 207.8 GB
 Required Firmware: 14.22.00.00
